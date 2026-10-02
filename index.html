@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>拐点坐标转奥维</title>
+<meta name="description" content="把采矿证、勘查许可证上的拐点坐标换成经纬度，核对面积，在卫星图上看一眼，导出奥维能打开的 KML 文件。">
+<style>
+:root {
+  --bg: #f4f5f2; --card: #ffffff; --ink: #1f2a33; --sub: #5d6b74; --faint: #8e9aa1;
+  --line: #e1e5e2; --field: #f1f3f1; --accent: #2e6b74; --accent-ink: #ffffff;
+  --ok: #2f7d4f; --ok-bg: #e7f3ec; --warn: #9a6a12; --warn-bg: #fbf1dc;
+  --bad: #b23b31; --bad-bg: #fbe7e4; --shape: #e2453a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15191c; --card: #1e2428; --ink: #e3e8ea; --sub: #9aa8ae; --faint: #6f7d83;
+    --line: #2e373c; --field: #262d32; --accent: #6fb5bf; --accent-ink: #0d1a1d;
+    --ok: #6cc08e; --ok-bg: #1d3226; --warn: #e2b55c; --warn-bg: #3a2f17;
+    --bad: #f08479; --bad-bg: #3d2120; --shape: #ff6a5c;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15191c; --card: #1e2428; --ink: #e3e8ea; --sub: #9aa8ae; --faint: #6f7d83;
+  --line: #2e373c; --field: #262d32; --accent: #6fb5bf; --accent-ink: #0d1a1d;
+  --ok: #6cc08e; --ok-bg: #1d3226; --warn: #e2b55c; --warn-bg: #3a2f17;
+  --bad: #f08479; --bad-bg: #3d2120; --shape: #ff6a5c;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.6 -apple-system, "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", sans-serif;
+}
+main { max-width: 760px; margin: 0 auto; padding: 20px 16px 48px; }
+h1 { font-size: 22px; margin: 4px 0 2px; letter-spacing: .5px; }
+.lead { color: var(--sub); margin: 0 0 16px; font-size: 14px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+.card h2 { font-size: 15px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+.step { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-ink); font-size: 12px; font-weight: 600; }
+textarea, input, select {
+  font: inherit; color: var(--ink); background: var(--field); border: 1px solid transparent;
+  border-radius: 9px; padding: 9px 11px; width: 100%; outline: none;
+}
+textarea:focus, input:focus, select:focus { border-color: var(--accent); }
+textarea { min-height: 150px; resize: vertical; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; line-height: 1.55; }
+label.f { display: block; font-size: 12px; color: var(--sub); margin-bottom: 4px; }
+.row { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; margin-top: 10px; }
+.row3 { display: grid; gap: 10px; grid-template-columns: 2fr 1fr 1fr; margin-top: 10px; }
+@media (max-width: 520px) {
+  .row { grid-template-columns: 1fr; }
+  .row3 { grid-template-columns: 1fr 1fr; }
+  .row3 > :first-child { grid-column: 1 / -1; }
+}
+.btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+button {
+  font: inherit; font-size: 14px; border: 0; border-radius: 9px; padding: 8px 14px; cursor: pointer;
+  background: var(--field); color: var(--ink);
+}
+button.primary { background: var(--accent); color: var(--accent-ink); font-weight: 600; padding: 12px 18px; font-size: 15px; }
+button.small { font-size: 12px; padding: 5px 10px; }
+button:disabled { opacity: .45; cursor: default; }
+.hint { font-size: 12px; color: var(--faint); margin-top: 6px; }
+.tag { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--field); color: var(--sub); }
+
+/* 表格 */
+.tablewrap { overflow-x: auto; margin: 0 -4px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; table-layout: fixed; }
+th:first-child { width: 48px; } th:last-child { width: 30px; }
+@media (max-width: 520px) { td input { font-size: 12px; padding: 6px 5px; letter-spacing: -.2px; } }
+th { text-align: left; font-weight: 500; color: var(--sub); font-size: 12px; padding: 4px; white-space: nowrap; }
+td { padding: 3px 4px; vertical-align: top; }
+td input { padding: 6px 8px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; min-width: 0; }
+td.no { width: 50px; } td.no input { width: 46px; text-align: center; }
+td.del { width: 30px; }
+tr.outrow td { padding: 0 4px 6px; }
+td.out { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; color: var(--sub); white-space: nowrap; }
+td.out:empty { display: none; }
+tr.err td input { border-color: var(--bad); }
+tr.flag td input { border-color: var(--warn); }
+td.del button { padding: 5px 8px; background: transparent; color: var(--faint); }
+
+/* 核对 */
+.checks { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.checks li { padding: 8px 11px; border-radius: 9px; font-size: 14px; }
+.checks li.ok { background: var(--ok-bg); color: var(--ok); }
+.checks li.warn { background: var(--warn-bg); color: var(--warn); }
+.checks li.bad { background: var(--bad-bg); color: var(--bad); }
+.checks li b { font-weight: 600; }
+
+/* 地图 */
+#map { position: relative; height: 340px; border-radius: 10px; overflow: hidden; background: var(--field);
+  touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; }
+#map .tiles img { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; }
+#map svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+#map .zoom { position: absolute; right: 8px; top: 8px; display: grid; gap: 4px; }
+#map .zoom button { width: 32px; height: 32px; padding: 0; background: rgba(255,255,255,.92); color: #222; font-size: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+#map .attr { position: absolute; left: 6px; bottom: 4px; font-size: 10px; color: #fff; text-shadow: 0 0 3px #000; pointer-events: none; }
+#map .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--faint); font-size: 13px; }
+.maptools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; font-size: 12px; color: var(--sub); }
+
+.banner { display: none; background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 14px; }
+details { margin-top: 10px; font-size: 14px; color: var(--sub); }
+details summary { cursor: pointer; color: var(--accent); }
+details ol { padding-left: 20px; margin: 6px 0; }
+footer { color: var(--faint); font-size: 12px; line-height: 1.7; margin-top: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="banner" id="wxBanner">你是在微信里打开的。微信不让下载文件，请点右上角 <b>···</b> → <b>在浏览器打开</b>，再来生成。</div>
+
+  <h1>拐点坐标 → 奥维</h1>
+  <p class="lead">把采矿证、勘查许可证上的拐点坐标粘进来，核对无误后导出文件，用奥维打开。</p>
+
+  <section class="card">
+    <h2><span class="step">1</span>粘贴坐标</h2>
+    <textarea id="src" spellcheck="false" placeholder="直接粘贴证上的坐标表，格式不用整理，例如：
+1  4201320.50  38512240.10
+2  4201330.20  38513480.60
+……
+或者经纬度：
+001,001,116°45′30.000″,39°52′15.000″
+002,002,116 46 10,39 52 15
+……
+手机上：对着证拍照 → 长按图片「提取文字」→ 复制 → 粘贴到这里"></textarea>
+    <div class="btns">
+      <button id="btnExample" class="small">填入示例（虚构坐标）</button>
+      <button id="btnClear" class="small">清空</button>
+    </div>
+    <div class="row3">
+      <div><label class="f" for="name">名称（导到奥维里显示的名字）</label><input id="name" placeholder="如：某某金矿采矿权"></div>
+      <div><label class="f" for="area">证上面积</label><input id="area" inputmode="decimal" placeholder="如 2.90"></div>
+      <div><label class="f" for="areaUnit">单位</label>
+        <select id="areaUnit"><option value="km2">平方公里</option><option value="ha">公顷</option><option value="m2">平方米</option></select></div>
+    </div>
+    <div class="row">
+      <div><label class="f" for="datum">坐标系</label>
+        <select id="datum">
+          <option value="cgcs2000">2000 国家大地坐标系</option>
+          <option value="xian80">1980 西安坐标系（近似）</option>
+          <option value="beijing54">1954 北京坐标系（近似）</option>
+        </select></div>
+      <div><label class="f" for="cm">中央经线（一般空着就行）</label><input id="cm" inputmode="decimal" placeholder="空着：自动按 Y 的前两位算"></div>
+    </div>
+    <details>
+      <summary>「中央经线」是什么，什么时候要填？</summary>
+      <p>地球是圆的，图纸是平的。为了用「米」来标位置，国家把地球像剥橘子一样竖着切成一瓣一瓣，每瓣单独摊平。每一瓣正中间那条南北线，就叫「中央经线」。证上的 X、Y 是在某一瓣里量出来的，所以必须知道是哪一瓣。</p>
+      <p><b>绝大多数证不用填</b>：Y 是 8 位数时，前两位就是「第几瓣」（带号），网页会自己算。比如 Y＝39512345.67，39 带就是 39×3＝117°。</p>
+      <p><b>只有 Y 是 6 位数</b>（比如 512345.67，前面没有带号）时才要填。这时去证上或坐标表旁边找「中央经线 117°」「中央子午线 117°」或「3 度带第 39 带」（39×3＝117）。</p>
+      <p>坐标是经纬度（116°45′30″ 这种）的，跟这一栏没关系。</p>
+    </details>
+  </section>
+
+  <section class="card">
+    <h2><span class="step">2</span>逐点核对 <span class="tag" id="kind">还没有坐标</span></h2>
+    <div class="tablewrap"><table id="tbl"></table></div>
+    <div class="btns"><button id="btnAdd" class="small">＋ 加一个点</button></div>
+    <p class="hint">识别有可能出错（1 和 7、3 和 8、0 和 6 最容易认混）。请对着证一行行看，不对就在格子里直接改。</p>
+  </section>
+
+  <section class="card">
+    <h2><span class="step">3</span>自动检查</h2>
+    <ul class="checks" id="checks"><li class="warn">粘贴坐标后自动检查</li></ul>
+  </section>
+
+  <section class="card">
+    <h2><span class="step">4</span>在卫星图上看一眼</h2>
+    <div id="map"><div class="tiles"></div><svg></svg><div class="empty">有坐标后在这里显示范围</div>
+      <div class="zoom"><button id="zin" aria-label="放大">＋</button><button id="zout" aria-label="缩小">－</button><button id="zfit" aria-label="回到范围" style="font-size:13px">◎</button></div>
+      <div class="attr" id="attr"></div></div>
+    <div class="maptools">
+      <span>底图：</span>
+      <select id="basemap" style="width:auto;padding:5px 8px;font-size:12px">
+        <option value="auto">卫星图</option>
+        <option value="none">不加载底图</option>
+      </select>
+      <span id="baseNote"></span>
+    </div>
+    <p class="hint">看框是不是落在矿区上。框跑到别的地方，多半是带号或某个点抄错了。</p>
+  </section>
+
+  <section class="card">
+    <h2><span class="step">5</span>导到奥维</h2>
+    <div class="btns">
+      <button id="btnKml" class="primary" disabled>下载 KML 文件</button>
+      <button id="btnShare" class="primary" style="display:none" disabled>分享给奥维 / 微信</button>
+      <button id="btnCopy" disabled>复制经纬度</button>
+    </div>
+    <p class="hint" id="exportNote"></p>
+    <details>
+      <summary>怎么导进奥维</summary>
+      <ol>
+        <li><b>安卓 / 华为手机</b>：下载后点通知栏里的文件 → 选「奥维互动地图」打开 → 按提示点「导入」；或在「文件管理」→ 下载 里找到它，点开选奥维。</li>
+        <li><b>苹果手机</b>：下载后在「文件」App 里找到它 → 共享 → 奥维。</li>
+        <li><b>电脑</b>：把文件拖进奥维窗口，或在奥维里「导入」。</li>
+        <li><b>发给别人</b>：把文件在微信里发过去，对方点开文件 → 右上角「用其他应用打开」→ 奥维。</li>
+      </ol>
+    </details>
+  </section>
+
+  <footer>
+    坐标的识别、换算、核对和生成文件，全部在你自己的手机或电脑上完成，坐标不会上传。看卫星图时，地图服务商会知道你在看哪一片区域（跟打开任何地图一样），不想这样可以把底图选成「不加载底图」。<br>
+    换算结果供查看参考，不能代替测绘成果。1980 西安、1954 北京坐标系没有当地转换参数，只能近似换算，图上位置可能差几十米到上百米。
+  </footer>
+</main>
+
+<script>
+// ==CORE START==  （换算与识别；不碰页面，方便单独测试）
+"use strict";
+
+const ELLIPSOIDS = {
+  cgcs2000:  { a: 6378137, f: 1 / 298.257222101, label: "2000 国家大地坐标系" },
+  xian80:    { a: 6378140, f: 1 / 298.257,       label: "1980 西安坐标系" },
+  beijing54: { a: 6378245, f: 1 / 298.3,         label: "1954 北京坐标系" },
+};
+const D2R = Math.PI / 180;
+
+// 高斯-克吕格投影（横轴墨卡托，比例因子 1，东偏 500 公里），用 Krüger n 级数，带内误差在毫米以下
+function tmSetup(ell) {
+  const n = ell.f / (2 - ell.f), n2 = n * n, n3 = n2 * n, n4 = n3 * n, n5 = n4 * n, n6 = n5 * n;
+  return {
+    n,
+    A: ell.a / (1 + n) * (1 + n2 / 4 + n4 / 64 + n6 / 256),
+    al: [
+      n / 2 - 2 * n2 / 3 + 5 * n3 / 16 + 41 * n4 / 180 - 127 * n5 / 288 + 7891 * n6 / 37800,
+      13 * n2 / 48 - 3 * n3 / 5 + 557 * n4 / 1440 + 281 * n5 / 630 - 1983433 * n6 / 1935360,
+      61 * n3 / 240 - 103 * n4 / 140 + 15061 * n5 / 26880 + 167603 * n6 / 181440,
+      49561 * n4 / 161280 - 179 * n5 / 168 + 6601661 * n6 / 7257600,
+      34729 * n5 / 80640 - 3418889 * n6 / 1995840,
+      212378941 * n6 / 319334400,
+    ],
+    be: [
+      n / 2 - 2 * n2 / 3 + 37 * n3 / 96 - n4 / 360 - 81 * n5 / 512 + 96199 * n6 / 604800,
+      n2 / 48 + n3 / 15 - 437 * n4 / 1440 + 46 * n5 / 105 - 1118711 * n6 / 3870720,
+      17 * n3 / 480 - 37 * n4 / 840 - 209 * n5 / 4480 + 5569 * n6 / 90720,
+      4397 * n4 / 161280 - 11 * n5 / 504 - 830251 * n6 / 7257600,
+      4583 * n5 / 161280 - 108847 * n6 / 3991680,
+      20648693 * n6 / 638668800,
+    ],
+    de: [
+      2 * n - 2 * n2 / 3 - 2 * n3 + 116 * n4 / 45 + 26 * n5 / 45 - 2854 * n6 / 675,
+      7 * n2 / 3 - 8 * n3 / 5 - 227 * n4 / 45 + 2704 * n5 / 315 + 2323 * n6 / 945,
+      56 * n3 / 15 - 136 * n4 / 35 - 1262 * n5 / 105 + 73814 * n6 / 2835,
+      4279 * n4 / 630 - 332 * n5 / 35 - 399572 * n6 / 14175,
+      4174 * n5 / 315 - 144838 * n6 / 6237,
+      601676 * n6 / 22275,
+    ],
+  };
+}
+const TM = {};
+function tm(datum) { return TM[datum] || (TM[datum] = tmSetup(ELLIPSOIDS[datum])); }
+
+/** 经纬度 → 平面（x 北坐标，y 东坐标，不含带号） */
+function gkForward(lat, lon, cm, datum) {
+  const p = tm(datum), phi = lat * D2R, lam = (lon - cm) * D2R;
+  const c = 2 * Math.sqrt(p.n) / (1 + p.n);
+  const t = Math.sinh(Math.atanh(Math.sin(phi)) - c * Math.atanh(c * Math.sin(phi)));
+  const xi1 = Math.atan2(t, Math.cos(lam)), eta1 = Math.atanh(Math.sin(lam) / Math.sqrt(1 + t * t));
+  let xi = xi1, eta = eta1;
+  for (let j = 1; j <= 6; j++) {
+    xi += p.al[j - 1] * Math.sin(2 * j * xi1) * Math.cosh(2 * j * eta1);
+    eta += p.al[j - 1] * Math.cos(2 * j * xi1) * Math.sinh(2 * j * eta1);
+  }
+  return { x: p.A * xi, y: 500000 + p.A * eta };
+}
+
+/** 平面 → 经纬度（x 北坐标，y 东坐标，不含带号） */
+function gkInverse(x, y, cm, datum) {
+  const p = tm(datum), xi = x / p.A, eta = (y - 500000) / p.A;
+  let xi1 = xi, eta1 = eta;
+  for (let j = 1; j <= 6; j++) {
+    xi1 -= p.be[j - 1] * Math.sin(2 * j * xi) * Math.cosh(2 * j * eta);
+    eta1 -= p.be[j - 1] * Math.cos(2 * j * xi) * Math.sinh(2 * j * eta);
+  }
+  const chi = Math.asin(Math.sin(xi1) / Math.cosh(eta1));
+  let phi = chi;
+  for (let j = 1; j <= 6; j++) phi += p.de[j - 1] * Math.sin(2 * j * chi);
+  return { lat: phi / D2R, lon: cm + Math.atan2(Math.sinh(eta1), Math.cos(xi1)) / D2R };
+}
+
+/** 带号 → 中央经线：13–23 是 6 度带，24–45 是 3 度带 */
+function zoneToCM(zone) {
+  if (zone >= 13 && zone <= 23) return { cm: zone * 6 - 3, kind: "6 度带" };
+  if (zone >= 24 && zone <= 45) return { cm: zone * 3, kind: "3 度带" };
+  return null;
+}
+
+// ── 文字整理 ──
+function normalizeText(s) {
+  return String(s)
+    .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))   // 全角数字
+    .replace(/[．。](?=\d)/g, ".")
+    .replace(/[，、；;]/g, ",").replace(/[：]/g, ":")
+    .replace(/[°º˚度]/g, "°").replace(/(\d)\s*\*/g, "$1°")
+    .replace(/[′’‘´`分]|'(?!')/g, "'")
+    .replace(/[″“”"秒]|''/g, '"')
+    .replace(/ /g, " ");
+}
+
+/** 一个格子里的经纬度：116°45′30″ / 116 45 30 / 116.7583 / 116°45.5′ */
+function parseAngle(s) {
+  const t = normalizeText(s).trim().replace(/^[EeNnWwSs东西南北经纬度]+/, "");
+  let m = t.match(/^(\d{1,3})\s*°\s*(\d{1,2}(?:\.\d+)?)\s*'?\s*(?:(\d{1,2}(?:\.\d+)?)\s*"?)?\s*$/);
+  if (!m) m = t.match(/^(\d{1,3})[\s\-:]+(\d{1,2}(?:\.\d+)?)(?:[\s\-:]+(\d{1,2}(?:\.\d+)?))?\s*$/);
+  if (m) {
+    const d = +m[1], mi = +m[2], se = m[3] ? +m[3] : 0;
+    if (mi >= 60 || se >= 60) return null;
+    return d + mi / 60 + se / 3600;
+  }
+  if (/^\d{1,3}(\.\d+)?$/.test(t)) return +t;
+  return null;
+}
+
+/** 一个格子里的平面坐标 */
+function parseMeters(s) {
+  const t = normalizeText(s).trim().replace(/^[XxYy]\s*[=:]?\s*/, "").replace(/[\s,]/g, "");
+  return /^\d{5,9}(\.\d+)?$/.test(t) ? +t : null;
+}
+
+function intDigits(v) { return String(Math.floor(Math.abs(v))).length; }
+
+// 一行里找出：度分秒、十进制度、平面坐标
+const RE_DMS = /(\d{1,3})\s*°\s*(\d{1,2}(?:\.\d+)?)\s*'\s*(?:(\d{1,2}(?:\.\d+)?)\s*"?)?/g;
+
+function dmsTokens(line) {
+  const out = []; let m; RE_DMS.lastIndex = 0;
+  while ((m = RE_DMS.exec(line))) {
+    const d = +m[1], mi = +m[2], se = m[3] ? +m[3] : 0;
+    if (mi < 60 && se < 60) out.push({ v: d + mi / 60 + se / 3600, raw: m[0].trim(), at: m.index, end: m.index + m[0].length });
+  }
+  return out;
+}
+
+function numberTokens(line) {
+  const out = []; const re = /\d+(?:\.\d+)?/g; let m;
+  while ((m = re.exec(line))) out.push({ v: +m[0], raw: m[0], at: m.index, dec: (m[0].split(".")[1] || "").length });
+  return out;
+}
+
+/** 拆开一个经纬度对：中国境内经度 73–136，纬度 3–54，不会重叠；出了这个范围就按「先经度后纬度」 */
+function pairLonLat(a, b) {
+  const lonLike = v => v >= 73 && v <= 136, latLike = v => v >= 3 && v <= 54;
+  if (lonLike(a.v) && latLike(b.v)) return { lon: a, lat: b, guessed: false };
+  if (lonLike(b.v) && latLike(a.v)) return { lon: b, lat: a, guessed: false };
+  return { lon: a, lat: b, guessed: true };
+}
+
+/**
+ * 读整段文字。返回 { kind: "ll"|"xy"|null, points: [{label, ring, c1, c2}], area, name, notes }
+ *  ll：c1 经度原文，c2 纬度原文；xy：c1 X 原文，c2 Y 原文
+ */
+function parseText(text) {
+  const src = normalizeText(text);
+  const lines = src.split(/\r?\n/);
+  const res = { kind: null, points: [], area: null, name: null, notes: [] };
+
+  // 面积、名称（顺手带出来；用原文，免得名称里的「分」「度」被当成符号）
+  const am = String(text).match(/面\s*积[^\d\n]{0,12}(\d+(?:\.\d+)?)\s*(平方公里|平方千米|km2|km²|公顷|平方米|m2|m²)/i);
+  if (am) res.area = { value: +am[1], raw: am[1], unit: /公顷/.test(am[2]) ? "ha" : /平方米|m2|m²/i.test(am[2]) && !/k/i.test(am[2]) ? "m2" : "km2" };
+  const nm = String(text).match(/(?:矿山名称|勘查项目名称|项目名称|矿区名称)\s*[:：]?\s*([^\n,]{2,40})/);
+  if (nm) res.name = nm[1].trim();
+
+  const ll = [], xy = [];
+  let lastSub = null, ring = 0;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    // 1. 度分秒
+    const dms = dmsTokens(line);
+    if (dms.length >= 2) {
+      const ids = numberTokens(line.slice(0, dms[0].at)).filter(t => t.dec === 0 && t.v < 10000);
+      const pr = pairLonLat(dms[0], dms[1]);
+      // 「序号, 各区序号」：各区序号回到 1，说明进入下一个区块
+      if (ids.length >= 2) { const sub = ids[1].v; if (lastSub !== null && sub <= 1 && lastSub >= 1) ring++; lastSub = sub; }
+      ll.push({ label: ids.length ? String(ids[0].v) : "", ring, c1: pr.lon.raw, c2: pr.lat.raw, guessed: pr.guessed });
+      continue;
+    }
+    const nums = numberTokens(line);
+    // 2. 平面坐标：整数部分 6–8 位
+    const big = nums.filter(t => intDigits(t.v) >= 6 && intDigits(t.v) <= 8);
+    if (big.length >= 2) {
+      let X = big.find(t => intDigits(t.v) === 7), Y = big.find(t => t !== X && (intDigits(t.v) === 8 || intDigits(t.v) === 6));
+      if (!X || !Y) { X = big[0]; Y = big[1]; }
+      const ids = numberTokens(line.slice(0, Math.min(X.at, Y.at))).filter(t => t.dec === 0 && t.v < 10000);
+      xy.push({ label: ids.length ? String(ids[0].v) : "", ring: 0, c1: X.raw, c2: Y.raw });
+      continue;
+    }
+    // 3. 空格分开的度 分 秒：最后 6 个数（度、度是整数）。要排在十进制度前面，免得把秒当成度
+    if (nums.length >= 6 && nums[nums.length - 6].dec === 0 && nums[nums.length - 3].dec === 0) {
+      const s6 = nums.slice(-6).map(t => t.v);
+      const okDms = (d, m, s) => d <= 180 && m < 60 && s < 60;
+      if (okDms(s6[0], s6[1], s6[2]) && okDms(s6[3], s6[4], s6[5])) {
+        const A = { v: s6[0] + s6[1] / 60 + s6[2] / 3600, raw: nums.slice(-6, -3).map(t => t.raw).join(" ") };
+        const B = { v: s6[3] + s6[4] / 60 + s6[5] / 3600, raw: nums.slice(-3).map(t => t.raw).join(" ") };
+        const ids = nums.length > 6 ? [nums[0]] : [];
+        const pr = pairLonLat(A, B);
+        ll.push({ label: ids.length ? String(ids[0].v) : "", ring: 0, c1: pr.lon.raw, c2: pr.lat.raw, guessed: pr.guessed });
+        continue;
+      }
+    }
+    // 4. 十进制度：带 3 位以上小数
+    const decs = nums.filter(t => t.dec >= 3 && t.v >= 3 && t.v <= 136);
+    if (decs.length >= 2) {
+      const ids = numberTokens(line.slice(0, decs[0].at)).filter(t => t.dec === 0 && t.v < 10000);
+      const pr = pairLonLat(decs[0], decs[1]);
+      ll.push({ label: ids.length ? String(ids[0].v) : "", ring: 0, c1: pr.lon.raw, c2: pr.lat.raw, guessed: pr.guessed });
+      continue;
+    }
+  }
+
+  if (ll.length >= 3 || xy.length >= 3) {
+    if (ll.length >= xy.length) { res.kind = "ll"; res.points = ll; }
+    else { res.kind = "xy"; res.points = xy; }
+    if (res.points.some(p => p.guessed)) res.notes.push("有的点不在中国境内的经纬度范围，按「先经度、后纬度」理解，请核对。");
+    return res;
+  }
+
+  // 兜底：识别出来的文字一列一列断开了 —— 把所有度分秒按出现顺序收集，经度、纬度各排一队再配对
+  const allDms = dmsTokens(src);
+  const lons = allDms.filter(t => t.v >= 73 && t.v <= 136), lats = allDms.filter(t => t.v >= 3 && t.v <= 54);
+  if (lons.length >= 3 && lons.length === lats.length) {
+    res.kind = "ll";
+    res.points = lons.map((t, i) => ({ label: String(i + 1), ring: 0, c1: t.raw, c2: lats[i].raw }));
+    res.notes.push("文字是断开的，按出现顺序把经度、纬度两两配对，请特别仔细核对。");
+    return res;
+  }
+  const allNums = numberTokens(src);
+  const Xs = allNums.filter(t => intDigits(t.v) === 7), Ys = allNums.filter(t => intDigits(t.v) === 8);
+  if (Xs.length >= 3 && Xs.length === Ys.length) {
+    res.kind = "xy";
+    res.points = Xs.map((t, i) => ({ label: String(i + 1), ring: 0, c1: t.raw, c2: Ys[i].raw }));
+    res.notes.push("文字是断开的，按出现顺序把 X、Y 两两配对，请特别仔细核对。");
+    return res;
+  }
+  if (src.trim()) res.notes.push("没认出完整的坐标。可以在下面的表里一个个填。");
+  return res;
+}
+
+/**
+ * 把表里的点换成经纬度。opts: { kind, datum, cm(手填中央经线, 可空) }
+ * 返回 { pts:[{label, ring, lat, lon, x, y, err}], zoneInfo, errors }
+ */
+function computePoints(rows, opts) {
+  const out = [], zones = new Set();
+  let zoneInfo = null;
+  for (const r of rows) {
+    const p = { label: r.label, ring: r.ring || 0, err: null };
+    if (opts.kind === "ll") {
+      const lon = parseAngle(r.c1), lat = parseAngle(r.c2);
+      if (lon == null || lat == null) p.err = "看不懂";
+      else if (lon > 180 || lat > 90) p.err = "超出范围";
+      else { p.lon = lon; p.lat = lat; }
+    } else {
+      const X = parseMeters(r.c1), Yraw = parseMeters(r.c2);
+      if (X == null || Yraw == null) { p.err = "看不懂"; out.push(p); continue; }
+      if (intDigits(X) !== 7) { p.err = "X 应该是 7 位整数"; out.push(p); continue; }
+      if (intDigits(Yraw) !== 8 && intDigits(Yraw) !== 6) { p.err = "Y 应该是 8 位（带带号）或 6 位整数"; out.push(p); continue; }
+      let cm, y = Yraw;
+      if (intDigits(Yraw) === 8) {
+        const zone = Math.floor(Yraw / 1e6), z = zoneToCM(zone);
+        zones.add(zone);
+        if (!z) { p.err = "带号 " + zone + " 不对"; out.push(p); continue; }
+        cm = opts.cm != null ? opts.cm : z.cm; y = Yraw - zone * 1e6;
+        zoneInfo = { zone, cm, kind: z.kind };
+      } else {
+        if (opts.cm == null) { p.err = "缺中央经线"; out.push(p); continue; }
+        cm = opts.cm; zoneInfo = { zone: null, cm, kind: "手填" };
+      }
+      p.x = X; p.y = y; p.cm = cm;
+      const g = gkInverse(X, y, cm, opts.datum);
+      p.lat = g.lat; p.lon = g.lon;
+    }
+    out.push(p);
+  }
+  return { pts: out, zoneInfo, zones: [...zones] };
+}
+
+/** 平面多边形面积（平方米）。经纬度的点先按中心经度投影 */
+function polygonArea(pts, datum) {
+  if (pts.length < 3) return 0;
+  let xy;
+  if (pts[0].x != null && pts.every(p => p.cm === pts[0].cm)) xy = pts.map(p => [p.y, p.x]);
+  else {
+    const cm = pts.reduce((s, p) => s + p.lon, 0) / pts.length;
+    xy = pts.map(p => { const g = gkForward(p.lat, p.lon, cm, datum); return [g.y, g.x]; });
+  }
+  let s = 0;
+  for (let i = 0; i < xy.length; i++) { const a = xy[i], b = xy[(i + 1) % xy.length]; s += a[0] * b[1] - b[0] * a[1]; }
+  return Math.abs(s) / 2;
+}
+
+function segCross(p1, p2, p3, p4) {
+  const d = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  const d1 = d(p3, p4, p1), d2 = d(p3, p4, p2), d3 = d(p1, p2, p3), d4 = d(p1, p2, p4);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+/** 边有没有交叉。返回交叉的两条边的起点序号，没有返回 null */
+function selfIntersection(pts) {
+  const n = pts.length, P = pts.map(p => [p.lon * Math.cos(p.lat * D2R), p.lat]);
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+    if (Math.abs(i - j) <= 1 || (i === 0 && j === n - 1)) continue;
+    if (segCross(P[i], P[(i + 1) % n], P[j], P[(j + 1) % n])) return [i, j];
+  }
+  return null;
+}
+
+/** 离群点：离其他点的中心特别远（超过中位距离的 6 倍且大于 3 公里） */
+function outliers(pts) {
+  if (pts.length < 4) return [];
+  const c = { lat: pts.reduce((s, p) => s + p.lat, 0) / pts.length, lon: pts.reduce((s, p) => s + p.lon, 0) / pts.length };
+  const dist = p => Math.hypot((p.lon - c.lon) * Math.cos(c.lat * D2R), p.lat - c.lat) * 111320;
+  const ds = pts.map(dist), sorted = [...ds].sort((a, b) => a - b), med = sorted[Math.floor(sorted.length / 2)];
+  return ds.map((d, i) => (d > med * 6 && d > 3000 ? i : -1)).filter(i => i >= 0);
+}
+
+function toDMS(v) {
+  let d = Math.floor(v), mf = (v - d) * 60, m = Math.floor(mf), s = (mf - m) * 60;
+  if (s >= 59.9995) { s = 0; m++; } if (m >= 60) { m = 0; d++; }
+  return d + "°" + String(m).padStart(2, "0") + "′" + s.toFixed(3).padStart(6, "0") + "″";
+}
+
+function xmlEsc(s) { return String(s).replace(/[<>&"']/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" }[c])); }
+
+/** 生成 KML：每个区块一个面，每个拐点一个标注 */
+function buildKml(name, rings, meta) {
+  const coord = p => p.lon.toFixed(8) + "," + p.lat.toFixed(8) + ",0";
+  const polys = rings.map((ring, k) => {
+    const closed = ring.concat([ring[0]]).map(coord).join(" ");
+    return `<Placemark><name>${xmlEsc(rings.length > 1 ? name + "（第" + (k + 1) + "块）" : name)}</name>` +
+      `<description>${xmlEsc(meta)}</description><styleUrl>#area</styleUrl>` +
+      `<Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>${closed}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`;
+  }).join("\n");
+  const marks = rings.flat().map(p =>
+    `<Placemark><name>${xmlEsc(p.label)}</name><description>${xmlEsc("经度 " + toDMS(p.lon) + "　纬度 " + toDMS(p.lat))}</description>` +
+    `<styleUrl>#pt</styleUrl><Point><coordinates>${coord(p)}</coordinates></Point></Placemark>`).join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+<name>${xmlEsc(name)}</name>
+<Style id="area"><LineStyle><color>ff2a3be2</color><width>3</width></LineStyle><PolyStyle><color>332a3be2</color></PolyStyle></Style>
+<Style id="pt"><IconStyle><scale>0.7</scale></IconStyle><LabelStyle><scale>0.9</scale></LabelStyle></Style>
+<Folder><name>范围</name>
+${polys}
+</Folder>
+<Folder><name>拐点</name>
+${marks}
+</Folder>
+</Document>
+</kml>
+`;
+}
+// ==CORE END==
+</script>
+
+<script>
+"use strict";
+// ── 页面 ──
+const $ = id => document.getElementById(id);
+const state = { kind: null, rows: [], computed: null, rings: [] };
+
+const EXAMPLE = `虚构示例（位置随意，仅演示格式）
+矿山名称：示例金矿
+矿区面积：1.23平方公里
+拐点  X坐标        Y坐标
+1   4201320.50   38512240.10
+2   4201330.20   38513480.60
+3   4200610.70   38513495.30
+4   4200598.40   38512890.80
+5   4200105.90   38512880.20
+6   4200098.30   38512230.40`;
+
+function fmtArea(m2, unit) {
+  if (unit === "ha") return (m2 / 1e4).toFixed(4) + " 公顷";
+  if (unit === "m2") return m2.toFixed(0) + " 平方米";
+  return (m2 / 1e6).toFixed(4) + " 平方公里";
+}
+function unitFactor(u) { return u === "ha" ? 1e4 : u === "m2" ? 1 : 1e6; }
+
+function readCM() { const v = $("cm").value.trim(); return v === "" ? null : +v; }
+
+function onSourceChange() {
+  const r = parseText($("src").value);
+  state.kind = r.kind;
+  state.rows = r.points.map(p => ({ label: p.label, ring: p.ring, c1: p.c1, c2: p.c2 }));
+  state.parseNotes = r.notes;
+  if (r.area && !$("area").dataset.touched) { $("area").value = r.area.raw; $("areaUnit").value = r.area.unit; }
+  if (r.name && !$("name").dataset.touched) $("name").value = r.name;
+  renderTable(); recompute(true);
+}
+
+function renderTable() {
+  const t = $("tbl");
+  if (!state.kind) { t.innerHTML = ""; $("kind").textContent = "还没有坐标"; return; }
+  const h1 = state.kind === "ll" ? "经度" : "X（7 位）", h2 = state.kind === "ll" ? "纬度" : "Y（8 位，含带号）";
+  t.innerHTML = `<tr><th>点号</th><th>${h1}</th><th>${h2}</th><th></th></tr>`;
+  state.rows.forEach((r, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td class="no"><input value="${xmlEsc(r.label)}" data-i="${i}" data-k="label"></td>
+      <td><input value="${xmlEsc(r.c1)}" data-i="${i}" data-k="c1" inputmode="decimal"></td>
+      <td><input value="${xmlEsc(r.c2)}" data-i="${i}" data-k="c2" inputmode="decimal"></td>
+      <td class="del"><button data-del="${i}" aria-label="删除这一点">✕</button></td>`;
+    t.appendChild(tr);
+    const tr2 = document.createElement("tr");   // 换算结果放在下面一行，手机上不会挤出屏幕
+    tr2.className = "outrow";
+    tr2.innerHTML = `<td></td><td colspan="3" class="out" id="out${i}"></td>`;
+    t.appendChild(tr2);
+  });
+}
+
+$("tbl").addEventListener("input", e => {
+  const el = e.target; if (!el.dataset.k) return;
+  state.rows[+el.dataset.i][el.dataset.k] = el.value; recompute(false);
+});
+$("tbl").addEventListener("click", e => {
+  const i = e.target.dataset.del; if (i == null) return;
+  state.rows.splice(+i, 1); renderTable(); recompute(false);
+});
+$("btnAdd").onclick = () => {
+  if (!state.kind) state.kind = "ll";
+  state.rows.push({ label: String(state.rows.length + 1), ring: state.rows.length ? state.rows[state.rows.length - 1].ring : 0, c1: "", c2: "" });
+  renderTable(); recompute(false);
+  const ins = $("tbl").querySelectorAll('input[data-k="c1"]'); ins[ins.length - 1].focus();
+};
+
+function recompute(fit) {
+  const checks = [];
+  const rows = $("tbl").querySelectorAll("tr:not(.outrow)");
+  if (!state.kind || !state.rows.length) {
+    state.computed = null; state.rings = [];
+    $("checks").innerHTML = `<li class="warn">${(state.parseNotes || [])[0] || "粘贴坐标后自动检查"}</li>`;
+    drawMap(fit); setExport(false); return;
+  }
+  const datum = $("datum").value;
+  const c = computePoints(state.rows, { kind: state.kind, datum, cm: readCM() });
+  state.computed = c;
+  c.pts.forEach((p, i) => {
+    const tr = rows[i + 1]; if (!tr) return;
+    tr.className = p.err ? "err" : "";
+    const out = $("out" + i);
+    if (out) out.textContent = p.err ? "⚠ " + p.err : state.kind === "xy" ? "→ 经度 " + toDMS(p.lon) + "　纬度 " + toDMS(p.lat) : "";
+  });
+  const good = c.pts.filter(p => !p.err);
+  const ringIds = [...new Set(good.map(p => p.ring))];
+  state.rings = ringIds.map(r => good.filter(p => p.ring === r)).filter(r => r.length >= 3);
+
+  $("kind").textContent = state.kind === "ll" ? "经纬度" :
+    c.zoneInfo ? `平面坐标 · ${c.zoneInfo.zone ? "带号 " + c.zoneInfo.zone + "，" : ""}${c.zoneInfo.kind}，中央经线 ${c.zoneInfo.cm}°` : "平面坐标";
+
+  (state.parseNotes || []).forEach(n => checks.push(["warn", n]));
+  const bad = c.pts.filter(p => p.err);
+  if (bad.length) checks.push(["bad", `有 <b>${bad.length}</b> 个点没读懂（表里标红的），改好才会算进去。`]);
+  checks.push([good.length >= 3 ? "ok" : "bad", `一共 <b>${good.length}</b> 个拐点${state.rings.length > 1 ? "，分 " + state.rings.length + " 块" : ""}。请跟证上「由 X 个拐点圈定」对一下。`]);
+
+  if (bad.some(p => p.err === "缺中央经线")) checks.push(["bad", "Y 坐标没写带号（只有 6 位整数），请在上面填「中央经线」。证上一般写着「中央经线 117°」或「3 度带第 39 带」（39 带就是 39×3＝117°）。"]);
+  if (c.zones.length > 1) checks.push(["bad", `Y 坐标的带号不一致（${c.zones.join("、")}），多半有一个点抄错了。`]);
+  if (datum !== "cgcs2000") checks.push(["warn", `按${ELLIPSOIDS[datum].label}近似换算，图上位置可能差几十米到上百米。`]);
+
+  const outChina = good.filter(p => p.lon < 73 || p.lon > 136 || p.lat < 3 || p.lat > 54);
+  if (outChina.length) checks.push(["warn", `有 ${outChina.length} 个点在中国境外。境外项目可以忽略；国内项目就是抄错了。`]);
+
+  // 面积
+  let areaSum = 0;
+  state.rings.forEach(r => areaSum += polygonArea(r, datum));
+  const declared = parseFloat($("area").value), unit = $("areaUnit").value;
+  if (state.rings.length) {
+    if (!isNaN(declared) && declared > 0) {
+      const dm2 = declared * unitFactor(unit), diff = (areaSum - dm2) / dm2 * 100;
+      const decimals = ($("area").value.split(".")[1] || "").length;
+      // 容差：证上面积四舍五入的那半位，再留一点余量；最少 0.5%，最多 1%
+      const tol = Math.min(1, Math.max(0.5, (0.5 * Math.pow(10, -decimals)) / declared * 100 + 0.2));
+      const cls = Math.abs(diff) <= tol ? "ok" : Math.abs(diff) <= 3 ? "warn" : "bad";
+      const word = cls === "ok" ? "对得上" : cls === "warn" ? "有点差距，请逐点核对" : "对不上，肯定有点抄错了";
+      checks.push([cls, `面积：算出来 <b>${fmtArea(areaSum, unit)}</b>，证上 <b>${$("area").value.trim()} ${$("areaUnit").selectedOptions[0].text}</b>，差 ${diff >= 0 ? "+" : ""}${diff.toFixed(2)}%，${word}。`]);
+    } else {
+      checks.push(["warn", `面积：算出来 <b>${fmtArea(areaSum, unit)}</b>。把证上的面积填进上面的「证上面积」，就能自动比对。`]);
+    }
+  }
+  // 交叉、离群
+  state.rings.forEach((r, k) => {
+    const x = selfIntersection(r);
+    if (x) checks.push(["bad", `${state.rings.length > 1 ? "第" + (k + 1) + "块：" : ""}第 ${r[x[0]].label || x[0] + 1}–${r[(x[0] + 1) % r.length].label || x[0] + 2} 点那条边和第 ${r[x[1]].label || x[1] + 1}–${r[(x[1] + 1) % r.length].label || x[1] + 2} 点那条边交叉了。可能顺序乱了，或有点抄错。`]);
+    else if (r.length >= 3) checks.push(["ok", `${state.rings.length > 1 ? "第" + (k + 1) + "块：" : ""}边没有交叉。`]);
+    outliers(r).forEach(i => checks.push(["bad", `第 ${r[i].label || i + 1} 点离其他点特别远，很可能抄错了。`]));
+  });
+  $("checks").innerHTML = checks.map(([c, t]) => `<li class="${c}">${t}</li>`).join("");
+  drawMap(fit);
+  setExport(state.rings.length > 0);
+}
+
+["datum", "cm", "areaUnit"].forEach(id => $(id).addEventListener("input", () => recompute(true)));
+$("area").addEventListener("input", () => { $("area").dataset.touched = "1"; recompute(false); });
+$("name").addEventListener("input", () => { $("name").dataset.touched = "1"; });
+let srcTimer;
+$("src").addEventListener("input", () => { clearTimeout(srcTimer); srcTimer = setTimeout(onSourceChange, 250); });
+$("btnExample").onclick = () => { $("src").value = EXAMPLE; delete $("area").dataset.touched; delete $("name").dataset.touched; onSourceChange(); };
+$("btnClear").onclick = () => { $("src").value = ""; $("area").value = ""; $("name").value = ""; delete $("area").dataset.touched; delete $("name").dataset.touched; onSourceChange(); };
+
+// ── 导出 ──
+function kmlName() { return ($("name").value.trim() || "拐点范围").replace(/[\\/:*?"<>|]/g, "_"); }
+function currentKml() {
+  const c = state.computed, datum = $("datum").value;
+  const meta = `${ELLIPSOIDS[datum].label}${datum !== "cgcs2000" ? "（近似换算）" : ""}；` +
+    (state.kind === "xy" && c.zoneInfo ? `平面坐标，中央经线 ${c.zoneInfo.cm}°；` : "") +
+    `${state.rings.flat().length} 个拐点；面积约 ${fmtArea(state.rings.reduce((s, r) => s + polygonArea(r, datum), 0), "km2")}`;
+  return buildKml($("name").value.trim() || "拐点范围", state.rings, meta);
+}
+function setExport(on) {
+  ["btnKml", "btnCopy", "btnShare"].forEach(id => $(id).disabled = !on);
+  $("exportNote").textContent = on ? `文件名：${kmlName()}.kml` : "核对完坐标后可以导出";
+}
+$("btnKml").onclick = () => {
+  const blob = new Blob([currentKml()], { type: "application/vnd.google-earth.kml+xml" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = kmlName() + ".kml";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+};
+function kmlFile() { return new File([currentKml()], kmlName() + ".kml", { type: "application/vnd.google-earth.kml+xml" }); }
+try {
+  if (navigator.canShare && navigator.canShare({ files: [new File(["x"], "t.kml", { type: "application/vnd.google-earth.kml+xml" })] })) $("btnShare").style.display = "";
+} catch (e) {}
+$("btnShare").onclick = async () => { try { await navigator.share({ files: [kmlFile()], title: kmlName() }); } catch (e) {} };
+$("btnCopy").onclick = async () => {
+  const txt = state.rings.flat().map(p => `${p.label}\t${toDMS(p.lon)}\t${toDMS(p.lat)}\t${p.lon.toFixed(8)}\t${p.lat.toFixed(8)}`).join("\n");
+  const head = "点号\t经度\t纬度\t经度(十进制)\t纬度(十进制)\n";
+  try { await navigator.clipboard.writeText(head + txt); $("exportNote").textContent = "已复制，可以粘到表格或微信里。"; }
+  catch (e) { prompt("复制下面的内容：", head + txt); }
+};
+if (/MicroMessenger/i.test(navigator.userAgent)) $("wxBanner").style.display = "block";
+
+// ── 地图：自己画瓦片，不依赖外部组件 ──
+// 天地图密钥（浏览器端，2026-10-03 申请，应用名「拐点坐标转奥维」，不设域名白名单，方便直接发文件给别人用）
+// 个人开发者额度：影像底图、影像注记各每天 1 万张图片，超了当天停、第二天自动恢复。没填密钥时用备用卫星图
+const TIANDITU_KEY = "9bdbc17180bfe9a8064302f3df3c291f";
+const map = { el: $("map"), z: 4, cx: 0, cy: 0, w: 0, h: 0, imgs: new Map() };
+const TILE = 256;
+function lon2px(lon, z) { return (lon + 180) / 360 * TILE * Math.pow(2, z); }
+function lat2px(lat, z) { const s = Math.sin(lat * D2R); return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * TILE * Math.pow(2, z); }
+function tileUrls(x, y, z) {
+  const base = $("basemap").value;
+  if (base === "none") return [];
+  if (TIANDITU_KEY) {
+    const s = (x + y) % 8, wm = (layer) => `https://t${s}.tianditu.gov.cn/${layer}_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${layer}&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX=${z}&TILEROW=${y}&TILECOL=${x}&tk=${TIANDITU_KEY}`;
+    return [wm("img"), wm("cia")];
+  }
+  return [`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`];
+}
+function baseLabel() {
+  if ($("basemap").value === "none") return "";
+  return TIANDITU_KEY ? "© 天地图" : "Esri World Imagery";
+}
+function fitMap() {
+  const all = state.rings.flat(); if (!all.length) return;
+  map.w = map.el.clientWidth; map.h = map.el.clientHeight;
+  const lats = all.map(p => p.lat), lons = all.map(p => p.lon);
+  let z = 18;
+  for (; z > 2; z--) {
+    const dx = lon2px(Math.max(...lons), z) - lon2px(Math.min(...lons), z);
+    const dy = lat2px(Math.min(...lats), z) - lat2px(Math.max(...lats), z);
+    if (dx < map.w - 80 && dy < map.h - 80) break;
+  }
+  map.z = z;
+  map.cx = (lon2px(Math.max(...lons), z) + lon2px(Math.min(...lons), z)) / 2;
+  map.cy = (lat2px(Math.min(...lats), z) + lat2px(Math.max(...lats), z)) / 2;
+}
+function drawMap(fit) {
+  const has = state.rings.length > 0;
+  map.el.querySelector(".empty").style.display = has ? "none" : "";
+  if (!has) { map.el.querySelector(".tiles").innerHTML = ""; map.imgs.clear(); map.el.querySelector("svg").innerHTML = ""; $("attr").textContent = ""; return; }
+  if (fit || !map.w) fitMap();
+  map.w = map.el.clientWidth; map.h = map.el.clientHeight;
+  const ox = map.cx - map.w / 2, oy = map.cy - map.h / 2, n = Math.pow(2, map.z);
+  // 瓦片
+  const want = new Set(), layer = map.el.querySelector(".tiles");
+  for (let tx = Math.floor(ox / TILE); tx <= Math.floor((ox + map.w) / TILE); tx++)
+    for (let ty = Math.floor(oy / TILE); ty <= Math.floor((oy + map.h) / TILE); ty++) {
+      if (ty < 0 || ty >= n) continue;
+      const wx = ((tx % n) + n) % n;
+      tileUrls(wx, ty, map.z).forEach((u, k) => {
+        const key = map.z + "/" + tx + "/" + ty + "/" + k; want.add(key);
+        let img = map.imgs.get(key);
+        if (!img) { img = new Image(); img.src = u; img.alt = ""; img.style.zIndex = k; layer.appendChild(img); map.imgs.set(key, img); img.onerror = () => { img.style.visibility = "hidden"; }; }
+        img.style.left = (tx * TILE - ox) + "px"; img.style.top = (ty * TILE - oy) + "px";
+      });
+    }
+  for (const [k, img] of map.imgs) if (!want.has(k)) { img.remove(); map.imgs.delete(k); }
+  $("attr").textContent = baseLabel();
+  $("baseNote").textContent = $("basemap").value === "none" ? "" : TIANDITU_KEY ? "" : "（备用卫星图，正式分享前换成天地图）";
+  // 范围和拐点
+  const sx = p => lon2px(p.lon, map.z) - ox, sy = p => lat2px(p.lat, map.z) - oy;
+  let svg = "";
+  state.rings.forEach(r => {
+    const d = r.map((p, i) => (i ? "L" : "M") + sx(p).toFixed(1) + " " + sy(p).toFixed(1)).join(" ") + " Z";
+    svg += `<path d="${d}" fill="var(--shape)" fill-opacity=".14" stroke="var(--shape)" stroke-width="2.5" stroke-linejoin="round"/>`;
+  });
+  state.rings.flat().forEach(p => {
+    const x = sx(p).toFixed(1), y = sy(p).toFixed(1);
+    svg += `<circle cx="${x}" cy="${y}" r="3.5" fill="#fff" stroke="var(--shape)" stroke-width="2"/>`;
+    svg += `<text x="${+x + 6}" y="${+y - 6}" font-size="12" font-weight="600" fill="#fff" stroke="#000" stroke-width="3" paint-order="stroke">${xmlEsc(p.label)}</text>`;
+  });
+  map.el.querySelector("svg").innerHTML = svg;
+}
+function zoomAt(dz, px, py) {
+  const nz = Math.max(3, Math.min(18, map.z + dz)); if (nz === map.z) return;
+  const f = Math.pow(2, nz - map.z);
+  px = px == null ? map.w / 2 : px; py = py == null ? map.h / 2 : py;
+  const wx = map.cx - map.w / 2 + px, wy = map.cy - map.h / 2 + py;
+  map.cx = wx * f - px + map.w / 2; map.cy = wy * f - py + map.h / 2; map.z = nz;
+  drawMap(false);
+}
+$("zin").onclick = e => { e.stopPropagation(); zoomAt(1); };
+$("zout").onclick = e => { e.stopPropagation(); zoomAt(-1); };
+$("zfit").onclick = e => { e.stopPropagation(); drawMap(true); };
+$("basemap").addEventListener("input", () => { map.el.querySelector(".tiles").innerHTML = ""; map.imgs.clear(); drawMap(false); });
+// 拖动、滚轮、双指缩放
+const ptrs = new Map(); let pinch0 = null;
+map.el.addEventListener("pointerdown", e => {
+  if (e.target.closest(".zoom")) return;
+  map.el.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch0 = { d: Math.hypot(a.x - b.x, a.y - b.y), done: false }; }
+});
+map.el.addEventListener("pointermove", e => {
+  const p = ptrs.get(e.pointerId); if (!p) return;
+  if (ptrs.size === 1) { map.cx -= e.clientX - p.x; map.cy -= e.clientY - p.y; drawMap(false); }
+  p.x = e.clientX; p.y = e.clientY;
+  if (ptrs.size === 2 && pinch0 && !pinch0.done) {
+    const [a, b] = [...ptrs.values()], d = Math.hypot(a.x - b.x, a.y - b.y), r = map.el.getBoundingClientRect();
+    if (d / pinch0.d > 1.5 || d / pinch0.d < 0.66) { zoomAt(d > pinch0.d ? 1 : -1, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top); pinch0 = { d, done: false }; }
+  }
+});
+["pointerup", "pointercancel"].forEach(t => map.el.addEventListener(t, e => { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch0 = null; }));
+let wheelAcc = 0;
+map.el.addEventListener("wheel", e => {
+  e.preventDefault(); wheelAcc += e.deltaY;
+  if (Math.abs(wheelAcc) > 60) { const r = map.el.getBoundingClientRect(); zoomAt(wheelAcc < 0 ? 1 : -1, e.clientX - r.left, e.clientY - r.top); wheelAcc = 0; }
+}, { passive: false });
+window.addEventListener("resize", () => drawMap(false));
+
+setExport(false);
+</script>
+</body>
+</html>
