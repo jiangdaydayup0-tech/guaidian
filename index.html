@@ -100,6 +100,16 @@ td.del button { padding: 5px 8px; background: transparent; color: var(--faint); 
 #map .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--faint); font-size: 13px; }
 .maptools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; font-size: 12px; color: var(--sub); }
 
+.imgbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 10px; }
+.imgbar label.pick { display: inline-flex; align-items: center; gap: 6px; background: var(--accent); color: var(--accent-ink);
+  border-radius: 9px; padding: 9px 14px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.imgbar input[type=file] { display: none; }
+.ocrbox { display: none; gap: 10px; align-items: center; background: var(--field); border-radius: 10px; padding: 8px; margin-bottom: 10px; }
+.ocrbox img { width: 72px; height: 54px; object-fit: cover; border-radius: 6px; background: #fff; }
+.ocrbox .msg { font-size: 13px; color: var(--sub); flex: 1; }
+.ocrbox .bar { height: 4px; background: var(--line); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.ocrbox .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.drop { outline: 2px dashed var(--accent); outline-offset: 4px; }
 .banner { display: none; background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 14px; }
 details { margin-top: 10px; font-size: 14px; color: var(--sub); }
 details summary { cursor: pointer; color: var(--accent); }
@@ -115,7 +125,12 @@ footer { color: var(--faint); font-size: 12px; line-height: 1.7; margin-top: 18p
   <p class="lead">把采矿证、勘查许可证上的拐点坐标粘进来，核对无误后导出文件，用奥维打开。</p>
 
   <section class="card">
-    <h2><span class="step">1</span>粘贴坐标</h2>
+    <h2><span class="step">1</span>粘贴坐标，或者给一张图片</h2>
+    <div class="imgbar">
+      <label class="pick">📷 选图片 / 拍照<input type="file" id="imgFile" accept="image/*"></label>
+      <span class="hint" style="margin:0">电脑上可以直接 ⌘V / Ctrl+V 粘贴截图，或把图片拖到下面框里</span>
+    </div>
+    <div class="ocrbox" id="ocrBox"><img id="ocrImg" alt="图片预览"><div style="flex:1"><div class="msg" id="ocrMsg"></div><div class="bar"><i id="ocrBar"></i></div></div></div>
     <textarea id="src" spellcheck="false" placeholder="直接粘贴证上的坐标表，格式不用整理，例如：
 1  4201320.50  38512240.10
 2  4201330.20  38513480.60
@@ -201,7 +216,7 @@ footer { color: var(--faint); font-size: 12px; line-height: 1.7; margin-top: 18p
   </section>
 
   <footer>
-    坐标的识别、换算、核对和生成文件，全部在你自己的手机或电脑上完成，坐标不会上传。看卫星图时，地图服务商会知道你在看哪一片区域（跟打开任何地图一样），不想这样可以把底图选成「不加载底图」。<br>
+    坐标的识别（包括从图片里认字）、换算、核对和生成文件，全部在你自己的手机或电脑上完成，图片和坐标都不会上传，也不经过任何 AI。看卫星图时，地图服务商会知道你在看哪一片区域（跟打开任何地图一样），不想这样可以把底图选成「不加载底图」。<br>
     换算结果供查看参考，不能代替测绘成果。1980 西安、1954 北京坐标系没有当地转换参数，只能近似换算，图上位置可能差几十米到上百米。
   </footer>
 </main>
@@ -296,7 +311,11 @@ function normalizeText(s) {
     .replace(/[°º˚度]/g, "°").replace(/(\d)\s*\*/g, "$1°")
     .replace(/[′’‘´`分]|'(?!')/g, "'")
     .replace(/[″“”"秒]|''/g, '"')
-    .replace(/ /g, " ");
+    .replace(/\u00A0/g, " ")
+    // 下面是图片认字常见的小毛病：「32. 000」→ 32.000；「19,000"」→ 19.000；「4201320,50」→ 4201320.50
+    .replace(/(\d)\.\s+(\d{3})(?!\d)/g, "$1.$2")
+    .replace(/(^|[^\d])(\d{1,2}),(\d{3})(?=\s*["'°]|\s*$)/gm, "$1$2.$3")
+    .replace(/(\d{6,8}),(\d{2})(?!\d)/g, "$1.$2");
 }
 
 /** 一个格子里的经纬度：116°45′30″ / 116 45 30 / 116.7583 / 116°45.5′ */
@@ -339,6 +358,39 @@ function numberTokens(line) {
   return out;
 }
 
+/** 点号大多是 1、2、3… 顺着排的；认字时个别认错，按前后顺序改过来 */
+function fixLabels(pts) {
+  const L = pts.length; if (!L) return;
+  let n = pts.map(p => /^\d+$/.test(p.label) ? +p.label : NaN);
+  if (n.filter(v => !isNaN(v)).length < L / 2) { pts.forEach((p, i) => p.label = String(i + 1)); return; }   // 大半没点号：按顺序编
+  // 七成以上的点号符合「第几行 + 固定差」：其余的按这个差改
+  const cnt = {}; n.forEach((v, i) => { if (!isNaN(v)) cnt[v - i] = (cnt[v - i] || 0) + 1; });
+  const [off, c] = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0];
+  if (c >= L * 0.7) n = n.map((v, i) => i + +off);
+  else for (let i = 0; i < L; i++) {   // 否则只改「前后两个夹住、对得上」的那个
+    if (i > 0 && i < L - 1 && n[i - 1] + 2 === n[i + 1]) n[i] = n[i - 1] + 1;
+    else if (i === 0 && L >= 3 && n[1] + 1 === n[2] && n[0] !== n[1] - 1) n[0] = n[1] - 1;
+    else if (i === L - 1 && L >= 3 && n[i - 2] + 1 === n[i - 1] && n[i] !== n[i - 1] + 1) n[i] = n[i - 1] + 1;
+  }
+  n.forEach((v, i) => pts[i].label = isNaN(v) ? String(i + 1) : String(v));
+}
+
+/** 一行数里找「度 分 秒 度 分 秒」六个连着的数；优先找能分清经度、纬度的那一组 */
+function dmsWindow(nums) {
+  let best = null;
+  for (let i = 0; i + 6 <= nums.length; i++) {
+    const w = nums.slice(i, i + 6), v = w.map(t => t.v);
+    if (w[0].dec || w[1].dec || w[3].dec || w[4].dec) continue;
+    if (v[0] > 180 || v[3] > 180 || v[1] >= 60 || v[2] >= 60 || v[4] >= 60 || v[5] >= 60) continue;
+    const fmt3 = k => `${w[k].raw}°${w[k + 1].raw}′${w[k + 2].raw}″`;
+    const A = { v: v[0] + v[1] / 60 + v[2] / 3600, raw: fmt3(0) }, B = { v: v[3] + v[4] / 60 + v[5] / 3600, raw: fmt3(3) };
+    const cand = { i, pr: pairLonLat(A, B) };
+    if (!cand.pr.guessed) return cand;
+    if (!best) best = cand;
+  }
+  return best;
+}
+
 /** 拆开一个经纬度对：中国境内经度 73–136，纬度 3–54，不会重叠；出了这个范围就按「先经度后纬度」 */
 function pairLonLat(a, b) {
   const lonLike = v => v >= 73 && v <= 136, latLike = v => v >= 3 && v <= 54;
@@ -359,6 +411,8 @@ function parseText(text) {
   // 面积、名称（顺手带出来；用原文，免得名称里的「分」「度」被当成符号）
   const am = String(text).match(/面\s*积[^\d\n]{0,12}(\d+(?:\.\d+)?)\s*(平方公里|平方千米|km2|km²|公顷|平方米|m2|m²)/i);
   if (am) res.area = { value: +am[1], raw: am[1], unit: /公顷/.test(am[2]) ? "ha" : /平方米|m2|m²/i.test(am[2]) && !/k/i.test(am[2]) ? "m2" : "km2" };
+  const cm = String(text).match(/由\s*(\d{1,3})\s*个\s*拐\s*点/);
+  if (cm) res.expected = +cm[1];
   const nm = String(text).match(/(?:矿山名称|勘查项目名称|项目名称|矿区名称)\s*[:：]?\s*([^\n,]{2,40})/);
   if (nm) res.name = nm[1].trim();
 
@@ -387,22 +441,16 @@ function parseText(text) {
       xy.push({ label: ids.length ? String(ids[0].v) : "", ring: 0, c1: X.raw, c2: Y.raw });
       continue;
     }
-    // 3. 空格分开的度 分 秒：最后 6 个数（度、度是整数）。要排在十进制度前面，免得把秒当成度
-    if (nums.length >= 6 && nums[nums.length - 6].dec === 0 && nums[nums.length - 3].dec === 0) {
-      const s6 = nums.slice(-6).map(t => t.v);
-      const okDms = (d, m, s) => d <= 180 && m < 60 && s < 60;
-      if (okDms(s6[0], s6[1], s6[2]) && okDms(s6[3], s6[4], s6[5])) {
-        const A = { v: s6[0] + s6[1] / 60 + s6[2] / 3600, raw: nums.slice(-6, -3).map(t => t.raw).join(" ") };
-        const B = { v: s6[3] + s6[4] / 60 + s6[5] / 3600, raw: nums.slice(-3).map(t => t.raw).join(" ") };
-        const ids = nums.length > 6 ? [nums[0]] : [];
-        const pr = pairLonLat(A, B);
-        ll.push({ label: ids.length ? String(ids[0].v) : "", ring: 0, c1: pr.lon.raw, c2: pr.lat.raw, guessed: pr.guessed });
-        continue;
-      }
+    // 3. 度 分 秒（符号丢了或认错了也行）：在一行里找 6 个连着的数。要排在十进制度前面，免得把秒当成度
+    const win = dmsWindow(nums);
+    if (win) {
+      const ids = nums.slice(0, win.i).filter(t => t.dec === 0 && t.v < 10000);
+      ll.push({ label: ids.length ? String(Math.floor(ids[0].v)) : "", ring: 0, c1: win.pr.lon.raw, c2: win.pr.lat.raw, guessed: win.pr.guessed });
+      continue;
     }
-    // 4. 十进制度：带 3 位以上小数
+    // 4. 十进制度：带 3 位以上小数、至少一个 4 位以上，而且这一行没有「°」（有「°」说明是度分秒，只是认坏了）
     const decs = nums.filter(t => t.dec >= 3 && t.v >= 3 && t.v <= 136);
-    if (decs.length >= 2) {
+    if (decs.length >= 2 && !line.includes("°") && (decs[0].dec >= 4 || decs[1].dec >= 4)) {
       const ids = numberTokens(line.slice(0, decs[0].at)).filter(t => t.dec === 0 && t.v < 10000);
       const pr = pairLonLat(decs[0], decs[1]);
       ll.push({ label: ids.length ? String(ids[0].v) : "", ring: 0, c1: pr.lon.raw, c2: pr.lat.raw, guessed: pr.guessed });
@@ -414,6 +462,7 @@ function parseText(text) {
     if (ll.length >= xy.length) { res.kind = "ll"; res.points = ll; }
     else { res.kind = "xy"; res.points = xy; }
     if (res.points.some(p => p.guessed)) res.notes.push("有的点不在中国境内的经纬度范围，按「先经度、后纬度」理解，请核对。");
+    fixLabels(res.points);
     return res;
   }
 
@@ -586,8 +635,9 @@ function onSourceChange() {
   state.kind = r.kind;
   state.rows = r.points.map(p => ({ label: p.label, ring: p.ring, c1: p.c1, c2: p.c2 }));
   state.parseNotes = r.notes;
-  if (r.area && !$("area").dataset.touched) { $("area").value = r.area.raw; $("areaUnit").value = r.area.unit; }
-  if (r.name && !$("name").dataset.touched) $("name").value = r.name;
+  state.expected = r.expected || null;
+  if (!$("area").dataset.touched) { $("area").value = r.area ? r.area.raw : ""; if (r.area) $("areaUnit").value = r.area.unit; }
+  if (!$("name").dataset.touched) $("name").value = r.name || "";
   renderTable(); recompute(true);
 }
 
@@ -652,7 +702,10 @@ function recompute(fit) {
   (state.parseNotes || []).forEach(n => checks.push(["warn", n]));
   const bad = c.pts.filter(p => p.err);
   if (bad.length) checks.push(["bad", `有 <b>${bad.length}</b> 个点没读懂（表里标红的），改好才会算进去。`]);
-  checks.push([good.length >= 3 ? "ok" : "bad", `一共 <b>${good.length}</b> 个拐点${state.rings.length > 1 ? "，分 " + state.rings.length + " 块" : ""}。请跟证上「由 X 个拐点圈定」对一下。`]);
+  if (state.expected && state.expected !== good.length)
+    checks.push(["bad", `证上写「由 <b>${state.expected}</b> 个拐点圈定」，这里只有 <b>${good.length}</b> 个。${good.length < state.expected ? "少了的请对着证在表里补上（点「＋ 加一个点」）。" : "多出来的请删掉。"}`]);
+  else if (state.expected) checks.push(["ok", `一共 <b>${good.length}</b> 个拐点，跟证上「由 ${state.expected} 个拐点圈定」对得上。`]);
+  else checks.push([good.length >= 3 ? "ok" : "bad", `一共 <b>${good.length}</b> 个拐点${state.rings.length > 1 ? "，分 " + state.rings.length + " 块" : ""}。请跟证上「由 X 个拐点圈定」对一下。`]);
 
   if (bad.some(p => p.err === "缺中央经线")) checks.push(["bad", "Y 坐标没写带号（只有 6 位整数），请在上面填「中央经线」。证上一般写着「中央经线 117°」或「3 度带第 39 带」（39 带就是 39×3＝117°）。"]);
   if (c.zones.length > 1) checks.push(["bad", `Y 坐标的带号不一致（${c.zones.join("、")}），多半有一个点抄错了。`]);
@@ -697,6 +750,86 @@ let srcTimer;
 $("src").addEventListener("input", () => { clearTimeout(srcTimer); srcTimer = setTimeout(onSourceChange, 250); });
 $("btnExample").onclick = () => { $("src").value = EXAMPLE; delete $("area").dataset.touched; delete $("name").dataset.touched; onSourceChange(); };
 $("btnClear").onclick = () => { $("src").value = ""; $("area").value = ""; $("name").value = ""; delete $("area").dataset.touched; delete $("name").dataset.touched; onSourceChange(); };
+
+// ── 图片认字：全部在本机（手机或电脑）上完成，图片不上传 ──
+// 认字组件 tesseract.js（开源，Apache-2.0）和中英文语言包放在本网站的 ocr/ 目录里，第一次用时下载，之后浏览器会记住
+const OCR_DIR = "ocr/";
+let ocrWorker = null, ocrBusy = false;
+function ocrShow(img, msg, pct) {
+  $("ocrBox").style.display = "flex";
+  if (img) $("ocrImg").src = img;
+  if (msg != null) $("ocrMsg").innerHTML = msg;
+  if (pct != null) $("ocrBar").style.width = Math.round(pct * 100) + "%";
+}
+function loadScript(src) {
+  return new Promise((ok, bad) => { const sc = document.createElement("script"); sc.src = src; sc.onload = ok; sc.onerror = () => bad(new Error("加载失败：" + src)); document.head.appendChild(sc); });
+}
+async function getWorker() {
+  if (ocrWorker) return ocrWorker;
+  if (!window.Tesseract) await loadScript(OCR_DIR + "tesseract.min.js");
+  ocrShow(null, "第一次使用，正在下载认字组件（约 10MB，之后就不用再下）……", 0.05);
+  ocrWorker = await Tesseract.createWorker(["chi_sim", "eng"], 1, {
+    workerPath: OCR_DIR + "worker.min.js", corePath: OCR_DIR, langPath: OCR_DIR.replace(/\/$/, ""),
+    logger: m => { if (m.status === "recognizing text") ocrShow(null, "正在认字……", 0.3 + m.progress * 0.7);
+                   else if (/load|init/.test(m.status)) ocrShow(null, "正在准备认字组件……", 0.05 + (m.progress || 0) * 0.25); },
+  });
+  await ocrWorker.setParameters({ tessedit_pageseg_mode: "6", preserve_interword_spaces: "1" });
+  return ocrWorker;
+}
+/** 图片转灰度、调到合适大小。实测：加对比度反而认错更多；小图放大 2 倍最准 */
+async function prepImage(file, mode) {
+  const bmp = await createImageBitmap(file);
+  let k = mode === "up" && bmp.width < 1000 ? 2 : 1;
+  if (bmp.width * k > 2400) k = 2400 / bmp.width;
+  const w = Math.round(bmp.width * k), h = Math.round(bmp.height * k);
+  const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+  const g = cv.getContext("2d"); g.filter = "grayscale(1)"; g.drawImage(bmp, 0, 0, w, h);
+  return cv;
+}
+/** 给一次认字结果打分：认出的点越多越好，读不懂的点扣分，跟证上「由 N 个拐点」对上加分 */
+function scoreText(text) {
+  const r = parseText(text);
+  if (!r.kind) return { r, score: -1 };
+  const c = computePoints(r.points, { kind: r.kind, datum: "cgcs2000", cm: readCM() });
+  const good = c.pts.filter(p => !p.err).length, bad = c.pts.length - good;
+  return { r, score: good * 10 - bad * 4 + (r.expected && r.expected === good ? 30 : 0), perfect: bad === 0 && (!r.expected || r.expected === good) };
+}
+function cleanOcr(t) { return (t || "").replace(/(\S) (?=\S)/g, (m, c) => /[\u4e00-\u9fa5]/.test(c) ? c : m).trim(); }   // 去掉汉字之间多出来的空格
+async function ocrFile(file) {
+  if (!file || !/^image\//.test(file.type) || ocrBusy) return;
+  ocrBusy = true;
+  const url = URL.createObjectURL(file);
+  ocrShow(url, "正在读图片……", 0.02);
+  try {
+    const worker = await getWorker();
+    // 第一遍：按实测最准的方式；结果不完美再换一种大小认一遍，挑好的
+    let best = null;
+    for (const [i, mode] of [["1", "up"], ["2", "orig"]]) {
+      if (best && best.perfect) break;
+      if (i === "2") ocrShow(null, "第一遍有对不上的地方，换个方式再认一遍……", 0.3);
+      const text = cleanOcr((await worker.recognize(await prepImage(file, mode))).data.text);
+      const sc = Object.assign(scoreText(text), { text });
+      if (!best || sc.score > best.score) best = sc;
+    }
+    $("src").value = best.text;
+    delete $("area").dataset.touched; delete $("name").dataset.touched;
+    onSourceChange();
+    state.parseNotes = ["下面是从图片里认出来的，<b>认字会出错</b>，请对着证一行行核对。"].concat(state.parseNotes || []);
+    recompute(true);
+    ocrShow(null, `认完了，找到 ${state.rows.length} 个点。认出来的原文在下面的框里，可以直接改。`, 1);
+  } catch (e) {
+    ocrShow(null, "认字没成功：" + xmlEsc(e.message || e) + "。可以换一张更清楚、更正的图片，或者直接粘贴文字。", 0);
+  } finally { ocrBusy = false; }
+}
+$("imgFile").addEventListener("change", e => { ocrFile(e.target.files[0]); e.target.value = ""; });
+document.addEventListener("paste", e => {
+  const item = [...(e.clipboardData ? e.clipboardData.items : [])].find(i => i.type.startsWith("image/"));
+  if (item) { e.preventDefault(); ocrFile(item.getAsFile()); }
+});
+const dropZone = $("src");
+["dragenter", "dragover"].forEach(t => dropZone.addEventListener(t, e => { if ([...e.dataTransfer.items].some(i => i.kind === "file")) { e.preventDefault(); dropZone.classList.add("drop"); } }));
+["dragleave", "drop"].forEach(t => dropZone.addEventListener(t, () => dropZone.classList.remove("drop")));
+dropZone.addEventListener("drop", e => { const f = [...e.dataTransfer.files].find(f => f.type.startsWith("image/")); if (f) { e.preventDefault(); ocrFile(f); } });
 
 // ── 导出 ──
 function kmlName() { return ($("name").value.trim() || "拐点范围").replace(/[\\/:*?"<>|]/g, "_"); }
