@@ -98,6 +98,17 @@ td.del button { padding: 5px 8px; background: transparent; color: var(--faint); 
 #map .zoom button { width: 32px; height: 32px; padding: 0; background: rgba(255,255,255,.92); color: #222; font-size: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
 #map .attr { position: absolute; left: 6px; bottom: 4px; font-size: 10px; color: #fff; text-shadow: 0 0 3px #000; pointer-events: none; }
 #map .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--faint); font-size: 13px; }
+/* 地图上的说明牌、比例尺、指北针：截图时一起截进去 */
+#map .mapcard { position: absolute; left: 8px; top: 8px; max-width: calc(100% - 60px); background: rgba(255,255,255,.93); color: #1f2a33;
+  border-radius: 8px; padding: 6px 9px; font-size: 12px; line-height: 1.45; box-shadow: 0 1px 3px rgba(0,0,0,.25); pointer-events: none; }
+#map .mapcard b { display: block; font-size: 13px; }
+#map .mapcard small { color: #5d6b74; font-size: 11px; }
+#map .scalebar { position: absolute; left: 8px; bottom: 20px; color: #fff; font-size: 11px; text-shadow: 0 0 3px #000; pointer-events: none; }
+#map .scalebar i { display: block; height: 5px; border: 2px solid #fff; border-top: 0; margin-top: 2px; filter: drop-shadow(0 0 1.5px rgba(0,0,0,.8)); }
+#map .north { position: absolute; right: 14px; bottom: 14px; color: #fff; font: 700 12px/1 sans-serif; text-align: center; text-shadow: 0 0 3px #000; pointer-events: none; }
+#map .north::before { content: ""; display: block; margin: 0 auto 3px; border-left: 7px solid transparent; border-right: 7px solid transparent; border-bottom: 14px solid #fff; filter: drop-shadow(0 0 2px rgba(0,0,0,.7)); }
+#map.full { position: fixed; inset: 0; height: 100vh; height: 100dvh; border-radius: 0; z-index: 100; }
+body.mapfull { overflow: hidden; }
 .maptools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; font-size: 12px; color: var(--sub); }
 
 .imgbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 10px; }
@@ -181,10 +192,19 @@ footer { color: var(--faint); font-size: 12px; line-height: 1.7; margin-top: 18p
   </section>
 
   <section class="card">
-    <h2><span class="step">4</span>在卫星图上看一眼</h2>
+    <h2><span class="step">4</span>在卫星图上看、截图</h2>
+    <p class="hint" style="margin:-4px 0 10px">很多时候这一步就够了：确认框落在矿区上，截个图发出去。地图上已经标好名称、面积、比例尺和指北针，截下来就能用；也可以点「保存成图片」，存一张更清楚的。</p>
     <div id="map"><div class="tiles"></div><svg></svg><div class="empty">有坐标后在这里显示范围</div>
-      <div class="zoom"><button id="zin" aria-label="放大">＋</button><button id="zout" aria-label="缩小">－</button><button id="zfit" aria-label="回到范围" style="font-size:13px">◎</button></div>
+      <div class="mapcard" id="mapCard" hidden></div>
+      <div class="scalebar" id="mapScale" hidden><span></span><i></i></div>
+      <div class="north" id="mapNorth" hidden>N</div>
+      <div class="zoom"><button id="zin" aria-label="放大">＋</button><button id="zout" aria-label="缩小">－</button><button id="zfit" aria-label="回到范围" style="font-size:13px">◎</button><button id="zfull" aria-label="全屏看" style="font-size:15px">⤢</button></div>
       <div class="attr" id="attr"></div></div>
+    <div class="btns">
+      <button id="btnPng" class="primary" disabled>保存成图片</button>
+      <button id="btnPngShare" style="display:none" disabled>分享图片</button>
+    </div>
+    <p class="hint" id="pngNote"></p>
     <div class="maptools">
       <span>底图：</span>
       <select id="basemap" style="width:auto;padding:5px 8px;font-size:12px">
@@ -193,11 +213,12 @@ footer { color: var(--faint); font-size: 12px; line-height: 1.7; margin-top: 18p
       </select>
       <span id="baseNote"></span>
     </div>
-    <p class="hint">看框是不是落在矿区上。框跑到别的地方，多半是带号或某个点抄错了。</p>
+    <p class="hint">框跑到别的地方，多半是带号或某个点抄错了。点 ⤢ 可以全屏看，截图更大。</p>
   </section>
 
   <section class="card">
-    <h2><span class="step">5</span>导到奥维</h2>
+    <h2><span class="step">5</span>需要时，导到奥维</h2>
+    <p class="hint" style="margin:-4px 0 10px">要去现场导航到拐点、跟别的图层叠着看、长期存着的时候，才需要导进奥维。只是看位置、发截图，上一步就够了。</p>
     <div class="btns">
       <button id="btnKml" class="primary" disabled>下载 KML 文件</button>
       <button id="btnShare" class="primary" style="display:none" disabled>分享给奥维 / 微信</button>
@@ -717,6 +738,7 @@ function recompute(fit) {
   // 面积
   let areaSum = 0;
   state.rings.forEach(r => areaSum += polygonArea(r, datum));
+  state.areaM2 = areaSum;
   const declared = parseFloat($("area").value), unit = $("areaUnit").value;
   if (state.rings.length) {
     if (!isNaN(declared) && declared > 0) {
@@ -745,7 +767,7 @@ function recompute(fit) {
 
 ["datum", "cm", "areaUnit"].forEach(id => $(id).addEventListener("input", () => recompute(true)));
 $("area").addEventListener("input", () => { $("area").dataset.touched = "1"; recompute(false); });
-$("name").addEventListener("input", () => { $("name").dataset.touched = "1"; });
+$("name").addEventListener("input", () => { $("name").dataset.touched = "1"; if (state.rings.length) drawMap(false); });
 let srcTimer;
 $("src").addEventListener("input", () => { clearTimeout(srcTimer); srcTimer = setTimeout(onSourceChange, 250); });
 $("btnExample").onclick = () => { $("src").value = EXAMPLE; delete $("area").dataset.touched; delete $("name").dataset.touched; onSourceChange(); };
@@ -841,7 +863,7 @@ function currentKml() {
   return buildKml($("name").value.trim() || "拐点范围", state.rings, meta);
 }
 function setExport(on) {
-  ["btnKml", "btnCopy", "btnShare"].forEach(id => $(id).disabled = !on);
+  ["btnKml", "btnCopy", "btnShare", "btnPng", "btnPngShare"].forEach(id => $(id).disabled = !on);
   $("exportNote").textContent = on ? `文件名：${kmlName()}.kml` : "核对完坐标后可以导出";
 }
 $("btnKml").onclick = () => {
@@ -909,15 +931,16 @@ function fitMap() {
   for (; z > 2; z--) {
     const dx = lon2px(Math.max(...lons), z) - lon2px(Math.min(...lons), z);
     const dy = lat2px(Math.min(...lats), z) - lat2px(Math.max(...lats), z);
-    if (dx < map.w - 80 && dy < map.h - 80) break;
+    if (dx < map.w - 80 && dy < map.h - 150) break;   // 上面留出说明牌的位置
   }
   map.z = z;
   map.cx = (lon2px(Math.max(...lons), z) + lon2px(Math.min(...lons), z)) / 2;
-  map.cy = (lat2px(Math.min(...lats), z) + lat2px(Math.max(...lats), z)) / 2;
+  map.cy = (lat2px(Math.min(...lats), z) + lat2px(Math.max(...lats), z)) / 2 - 30;   // 框整体往下放一点，不被说明牌挡住
 }
 function drawMap(fit) {
   const has = state.rings.length > 0;
   map.el.querySelector(".empty").style.display = has ? "none" : "";
+  ["mapCard", "mapScale", "mapNorth"].forEach(id => $(id).hidden = !has);
   if (!has) { map.el.querySelector(".tiles").innerHTML = ""; map.imgs.clear(); map.el.querySelector("svg").innerHTML = ""; $("attr").textContent = ""; return; }
   if (fit || !map.w) fitMap();
   map.w = map.el.clientWidth; map.h = map.el.clientHeight;
@@ -951,7 +974,136 @@ function drawMap(fit) {
     svg += `<text x="${+x + 6}" y="${+y - 6}" font-size="12" font-weight="600" fill="#fff" stroke="#000" stroke-width="3" paint-order="stroke">${xmlEsc(p.label)}</text>`;
   });
   map.el.querySelector("svg").innerHTML = svg;
+  // 说明牌、比例尺
+  const info = mapInfo();
+  $("mapCard").innerHTML = `<b>${xmlEsc(info.title)}</b>${xmlEsc(info.line)}<br><small>${xmlEsc(info.small)}</small>`;
+  const sb = scaleBar(90);
+  $("mapScale").querySelector("span").textContent = sb.label;
+  $("mapScale").querySelector("i").style.width = sb.px.toFixed(0) + "px";
 }
+
+/** 地图说明牌的内容：名称、面积、拐点数、坐标系 */
+function mapInfo() {
+  const a = state.areaM2 || 0, n = state.rings.flat().length;
+  const area = a >= 1e5 ? (a / 1e6).toFixed(a >= 1e7 ? 2 : 3) + " 平方公里" : a >= 1e3 ? (a / 1e4).toFixed(2) + " 公顷" : a.toFixed(0) + " 平方米";
+  const datum = $("datum").value;
+  return { title: $("name").value.trim() || "拐点范围", line: `面积约 ${area} · ${n} 个拐点`,
+           small: ELLIPSOIDS[datum].label + (datum !== "cgcs2000" ? "（近似）" : "") };
+}
+/** 比例尺：大约 target 像素长，取 1、2、5 开头的整数米 */
+function px2lat(y, z) { const n = Math.PI - 2 * Math.PI * y / (TILE * Math.pow(2, z)); return Math.atan(Math.sinh(n)) / D2R; }
+function scaleBar(target) {
+  const mpp = 40075016.686 * Math.cos(px2lat(map.cy, map.z) * D2R) / (TILE * Math.pow(2, map.z));
+  const raw = mpp * target, e = Math.pow(10, Math.floor(Math.log10(raw)));
+  const nice = [5, 2, 1].map(k => k * e).find(v => v <= raw) || e;
+  return { px: nice / mpp, label: nice >= 1000 ? nice / 1000 + " 公里" : nice + " 米" };
+}
+
+// ── 全屏看：方便截大图 ──
+function setFull(on) {
+  map.el.classList.toggle("full", on); document.body.classList.toggle("mapfull", on);
+  $("zfull").textContent = on ? "✕" : "⤢"; $("zfull").setAttribute("aria-label", on ? "退出全屏" : "全屏看");
+  setTimeout(() => drawMap(true), 30);
+}
+$("zfull").onclick = e => { e.stopPropagation(); setFull(!map.el.classList.contains("full")); };
+document.addEventListener("keydown", e => { if (e.key === "Escape" && map.el.classList.contains("full")) setFull(false); });
+
+// ── 保存成图片：把卫星图、范围、拐点、说明牌、比例尺、指北针画成一张 2 倍清晰度的图 ──
+function loadImg(u) {
+  return new Promise(res => {
+    const im = new Image(); im.crossOrigin = "anonymous";   // 天地图允许跨域取图（Access-Control-Allow-Origin: *），才能存成图片
+    const t = setTimeout(() => res(null), 10000);
+    im.onload = () => { clearTimeout(t); res(im); }; im.onerror = () => { clearTimeout(t); res(null); };
+    im.src = u;
+  });
+}
+function rrect(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+async function renderMapImage() {
+  if (!map.w || !map.h) throw new Error("地图还没显示出来");
+  const S = 2, W = Math.round(map.w * S), H = Math.round(map.h * S);
+  const ze = Math.min(18, map.z + 1), f = Math.pow(2, ze - map.z), k = S / f;   // 用深一级的瓦片，画出来更清楚
+  const ox = map.cx * f - W / (2 * k), oy = map.cy * f - H / (2 * k), n = Math.pow(2, ze);
+  const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+  const g = cv.getContext("2d"); g.fillStyle = "#dfe3e0"; g.fillRect(0, 0, W, H);
+  const jobs = [];
+  for (let tx = Math.floor(ox / TILE); tx <= Math.floor((ox + W / k) / TILE); tx++)
+    for (let ty = Math.floor(oy / TILE); ty <= Math.floor((oy + H / k) / TILE); ty++) {
+      if (ty < 0 || ty >= n) continue;
+      const wx = ((tx % n) + n) % n;
+      tileUrls(wx, ty, ze).forEach((u, layer) => jobs.push(loadImg(u).then(img => ({ img, tx, ty, layer }))));
+    }
+  const tiles = (await Promise.all(jobs)).filter(t => t.img).sort((a, b) => a.layer - b.layer);
+  tiles.forEach(t => g.drawImage(t.img, (t.tx * TILE - ox) * k, (t.ty * TILE - oy) * k, TILE * k, TILE * k));
+  // 范围和拐点（跟屏幕上一样的位置，放大 S 倍）
+  const ox0 = map.cx - map.w / 2, oy0 = map.cy - map.h / 2;
+  const sx = p => (lon2px(p.lon, map.z) - ox0) * S, sy = p => (lat2px(p.lat, map.z) - oy0) * S;
+  const RED = "#e2453a", FONT = '"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei",sans-serif';
+  g.lineJoin = "round";
+  state.rings.forEach(r => {
+    g.beginPath(); r.forEach((p, i) => i ? g.lineTo(sx(p), sy(p)) : g.moveTo(sx(p), sy(p))); g.closePath();
+    g.fillStyle = "rgba(226,69,58,.14)"; g.fill(); g.strokeStyle = RED; g.lineWidth = 2.5 * S; g.stroke();
+  });
+  g.font = `600 ${12 * S}px ${FONT}`;
+  state.rings.flat().forEach(p => {
+    g.beginPath(); g.arc(sx(p), sy(p), 3.5 * S, 0, Math.PI * 2); g.fillStyle = "#fff"; g.fill(); g.strokeStyle = RED; g.lineWidth = 2 * S; g.stroke();
+    g.lineWidth = 3 * S; g.strokeStyle = "#000"; g.strokeText(p.label, sx(p) + 6 * S, sy(p) - 6 * S);
+    g.fillStyle = "#fff"; g.fillText(p.label, sx(p) + 6 * S, sy(p) - 6 * S);
+  });
+  // 说明牌
+  const info = mapInfo(), pad = 9 * S;
+  const f1 = `700 ${14 * S}px ${FONT}`, f2 = `${12 * S}px ${FONT}`, f3 = `${11 * S}px ${FONT}`;
+  g.font = f1; let bw = g.measureText(info.title).width; g.font = f2; bw = Math.max(bw, g.measureText(info.line).width); g.font = f3; bw = Math.max(bw, g.measureText(info.small).width);
+  bw = Math.min(bw + pad * 2, W - 16 * S); const bh = 62 * S;
+  rrect(g, 8 * S, 8 * S, bw, bh, 8 * S); g.fillStyle = "rgba(255,255,255,.93)"; g.fill();
+  g.fillStyle = "#1f2a33"; g.font = f1; g.fillText(info.title, 8 * S + pad, 8 * S + 20 * S, bw - pad * 2);
+  g.font = f2; g.fillText(info.line, 8 * S + pad, 8 * S + 38 * S, bw - pad * 2);
+  g.fillStyle = "#5d6b74"; g.font = f3; g.fillText(info.small, 8 * S + pad, 8 * S + 54 * S, bw - pad * 2);
+  // 比例尺、指北针、图源和日期
+  const sb = scaleBar(90), shadow = on => { g.shadowColor = on ? "rgba(0,0,0,.85)" : "transparent"; g.shadowBlur = on ? 3 * S : 0; };
+  shadow(true); g.fillStyle = "#fff"; g.font = f3; g.fillText(sb.label, 10 * S, H - 30 * S);
+  g.strokeStyle = "#fff"; g.lineWidth = 2 * S; g.beginPath(); g.moveTo(10 * S, H - 26 * S); g.lineTo(10 * S, H - 20 * S); g.lineTo(10 * S + sb.px * S, H - 20 * S); g.lineTo(10 * S + sb.px * S, H - 26 * S); g.stroke();
+  const nx = W - 22 * S, ny = H - 44 * S;
+  g.beginPath(); g.moveTo(nx, ny); g.lineTo(nx - 7 * S, ny + 14 * S); g.lineTo(nx + 7 * S, ny + 14 * S); g.closePath(); g.fill();
+  g.font = `700 ${12 * S}px sans-serif`; g.textAlign = "center"; g.fillText("N", nx, ny + 28 * S);
+  g.textAlign = "left"; g.font = `${10 * S}px ${FONT}`;
+  const d = new Date(), stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  g.fillText((baseLabel() ? baseLabel() + " · " : "") + stamp, 10 * S, H - 6 * S);
+  shadow(false);
+  return { cv, missing: jobs.length - tiles.length };
+}
+let pngCache = null;   // 分享要在点击后很快发起，所以第一次画好先存着，第二次点直接用
+function pngKey() { return [map.z, map.cx.toFixed(0), map.cy.toFixed(0), map.w, map.h, $("name").value, state.areaM2, $("basemap").value].join("|"); }
+async function getPng() {
+  if (pngCache && pngCache.key === pngKey()) return pngCache;
+  $("pngNote").textContent = "正在生成图片……";
+  const { cv, missing } = await renderMapImage();
+  const blob = await new Promise(r => cv.toBlob(r, "image/png"));
+  pngCache = { key: pngKey(), blob, missing };
+  return pngCache;
+}
+function pngName() { return kmlName() + "-卫星图.png"; }
+$("btnPng").onclick = async () => {
+  try {
+    const { blob, missing } = await getPng();
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = pngName();
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    $("pngNote").textContent = `已保存：${pngName()}` + (missing ? `（有 ${missing} 块卫星图没加载出来，可以稍等再存一次）` : "") + "。手机上在「文件管理 → 下载」里，也可以直接截屏。";
+  } catch (e) { $("pngNote").textContent = "图片没生成出来（" + (e.message || e) + "），可以直接截屏。"; }
+};
+try {
+  if (!/MicroMessenger/i.test(navigator.userAgent) && navigator.canShare && navigator.canShare({ files: [new File(["x"], "t.png", { type: "image/png" })] })) $("btnPngShare").style.display = "";
+} catch (e) {}
+$("btnPngShare").onclick = async () => {
+  const fresh = !(pngCache && pngCache.key === pngKey());
+  const { blob } = await getPng();
+  try {
+    await navigator.share({ files: [new File([blob], pngName(), { type: "image/png" })], title: kmlName() });
+    $("pngNote").textContent = "";
+  } catch (e) {
+    if (e && e.name === "AbortError") return;
+    $("pngNote").textContent = fresh ? "图片准备好了，请再点一次「分享图片」。" : "这个浏览器分享不了图片，请点「保存成图片」，或者直接截屏。";
+  }
+};
 function zoomAt(dz, px, py) {
   const nz = Math.max(3, Math.min(18, map.z + dz)); if (nz === map.z) return;
   const f = Math.pow(2, nz - map.z);
