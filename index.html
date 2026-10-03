@@ -120,6 +120,9 @@ body.mapfull { overflow: hidden; }
 .ocrbox .msg { font-size: 13px; color: var(--sub); flex: 1; }
 .ocrbox .bar { height: 4px; background: var(--line); border-radius: 2px; margin-top: 6px; overflow: hidden; }
 .ocrbox .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.cmbox { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--warn-bg); }
+.cmbox label.f { color: var(--warn); font-weight: 600; font-size: 13px; }
+.cmbox .hint { color: var(--warn); opacity: .85; }
 .drop { outline: 2px dashed var(--accent); outline-offset: 4px; }
 .banner { display: none; background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 14px; }
 details { margin-top: 10px; font-size: 14px; color: var(--sub); }
@@ -161,22 +164,20 @@ footer { color: var(--faint); font-size: 12px; line-height: 1.7; margin-top: 18p
       <div><label class="f" for="areaUnit">单位</label>
         <select id="areaUnit"><option value="km2">平方公里</option><option value="ha">公顷</option><option value="m2">平方米</option></select></div>
     </div>
-    <div class="row">
+    <div class="row" style="grid-template-columns:1fr">
       <div><label class="f" for="datum">坐标系</label>
         <select id="datum">
           <option value="cgcs2000">2000 国家大地坐标系</option>
           <option value="xian80">1980 西安坐标系（近似）</option>
           <option value="beijing54">1954 北京坐标系（近似）</option>
         </select></div>
-      <div><label class="f" for="cm">中央经线（一般空着就行）</label><input id="cm" inputmode="decimal" placeholder="空着：自动按 Y 的前两位算"></div>
     </div>
-    <details>
-      <summary>「中央经线」是什么，什么时候要填？</summary>
-      <p>地球是圆的，图纸是平的。为了用「米」来标位置，国家把地球像剥橘子一样竖着切成一瓣一瓣，每瓣单独摊平。每一瓣正中间那条南北线，就叫「中央经线」。证上的 X、Y 是在某一瓣里量出来的，所以必须知道是哪一瓣。</p>
-      <p><b>绝大多数证不用填</b>：Y 是 8 位数时，前两位就是「第几瓣」（带号），网页会自己算。比如 Y＝39512345.67，39 带就是 39×3＝117°。</p>
-      <p><b>只有 Y 是 6 位数</b>（比如 512345.67，前面没有带号）时才要填。这时去证上或坐标表旁边找「中央经线 117°」「中央子午线 117°」或「3 度带第 39 带」（39×3＝117）。</p>
-      <p>坐标是经纬度（116°45′30″ 这种）的，跟这一栏没关系。</p>
-    </details>
+    <div class="cmbox" id="cmBox" hidden>
+      <label class="f" for="cm">中央经线（这批坐标的 Y 只有 6 位、没写带号，需要补上）</label>
+      <input id="cm" inputmode="decimal" placeholder="例如 117">
+      <p class="hint">去证上或坐标表旁边找「中央经线 117°」「中央子午线 117°」或「3 度带第 39 带」（39×3＝117），把度数填进来。<br>
+      为什么要填：证上的 X、Y 是在国家划分的某一条「南北窄带」里量出来的，平常 Y 的前两位就写着是第几带；这批没写，网页就不知道是哪一带，没法换成经纬度。</p>
+    </div>
   </section>
 
   <section class="card">
@@ -701,6 +702,7 @@ function recompute(fit) {
   const rows = $("tbl").querySelectorAll("tr:not(.outrow)");
   if (!state.kind || !state.rows.length) {
     state.computed = null; state.rings = [];
+    $("cmBox").hidden = readCM() == null;
     $("checks").innerHTML = `<li class="warn">${(state.parseNotes || [])[0] || "粘贴坐标后自动检查"}</li>`;
     drawMap(fit); setExport(false); return;
   }
@@ -721,14 +723,17 @@ function recompute(fit) {
     c.zoneInfo ? `平面坐标 · ${c.zoneInfo.zone ? "带号 " + c.zoneInfo.zone + "，" : ""}${c.zoneInfo.kind}，中央经线 ${c.zoneInfo.cm}°` : "平面坐标";
 
   (state.parseNotes || []).forEach(n => checks.push(["warn", n]));
-  const bad = c.pts.filter(p => p.err);
-  if (bad.length) checks.push(["bad", `有 <b>${bad.length}</b> 个点没读懂（表里标红的），改好才会算进去。`]);
-  if (state.expected && state.expected !== good.length)
+  const bad = c.pts.filter(p => p.err), unread = bad.filter(p => p.err !== "缺中央经线");
+  if (unread.length) checks.push(["bad", `有 <b>${unread.length}</b> 个点没读懂（表里标红的），改好才会算进去。`]);
+  if (!good.length && bad.length && !unread.length) { /* 只是缺中央经线，下面单独提示 */ }
+  else if (state.expected && state.expected !== good.length)
     checks.push(["bad", `证上写「由 <b>${state.expected}</b> 个拐点圈定」，这里只有 <b>${good.length}</b> 个。${good.length < state.expected ? "少了的请对着证在表里补上（点「＋ 加一个点」）。" : "多出来的请删掉。"}`]);
   else if (state.expected) checks.push(["ok", `一共 <b>${good.length}</b> 个拐点，跟证上「由 ${state.expected} 个拐点圈定」对得上。`]);
   else checks.push([good.length >= 3 ? "ok" : "bad", `一共 <b>${good.length}</b> 个拐点${state.rings.length > 1 ? "，分 " + state.rings.length + " 块" : ""}。请跟证上「由 X 个拐点圈定」对一下。`]);
 
-  if (bad.some(p => p.err === "缺中央经线")) checks.push(["bad", "Y 坐标没写带号（只有 6 位整数），请在上面填「中央经线」。证上一般写着「中央经线 117°」或「3 度带第 39 带」（39 带就是 39×3＝117°）。"]);
+  const needCM = bad.some(p => p.err === "缺中央经线") || readCM() != null;
+  $("cmBox").hidden = !needCM;
+  if (bad.some(p => p.err === "缺中央经线")) checks.push(["bad", "这批坐标的 Y 只有 6 位，没写带号，网页不知道它在哪一条带里。请在上面第 1 步新出现的黄色框里填「中央经线」。"]);
   if (c.zones.length > 1) checks.push(["bad", `Y 坐标的带号不一致（${c.zones.join("、")}），多半有一个点抄错了。`]);
   if (datum !== "cgcs2000") checks.push(["warn", `按${ELLIPSOIDS[datum].label}近似换算，图上位置可能差几十米到上百米。`]);
 
@@ -756,8 +761,10 @@ function recompute(fit) {
   // 交叉、离群
   state.rings.forEach((r, k) => {
     const x = selfIntersection(r);
-    if (x) checks.push(["bad", `${state.rings.length > 1 ? "第" + (k + 1) + "块：" : ""}第 ${r[x[0]].label || x[0] + 1}–${r[(x[0] + 1) % r.length].label || x[0] + 2} 点那条边和第 ${r[x[1]].label || x[1] + 1}–${r[(x[1] + 1) % r.length].label || x[1] + 2} 点那条边交叉了。可能顺序乱了，或有点抄错。`]);
-    else if (r.length >= 3) checks.push(["ok", `${state.rings.length > 1 ? "第" + (k + 1) + "块：" : ""}边没有交叉。`]);
+    const blk = state.rings.length > 1 ? "第" + (k + 1) + "块：" : "";
+    const nm = i => r[i].label || String(i + 1);
+    if (x) checks.push(["bad", `${blk}拐点连起来的框「打结」了：${nm(x[0])}→${nm((x[0] + 1) % r.length)} 和 ${nm(x[1])}→${nm((x[1] + 1) % r.length)} 这两条边交叉。正常的矿权范围不会这样，多半是有两个点顺序颠倒了，或者某个点抄错了。`]);
+    else if (r.length >= 3) checks.push(["ok", `${blk}拐点按顺序连起来是一个正常的框，没有打结交叉。`]);
     outliers(r).forEach(i => checks.push(["bad", `第 ${r[i].label || i + 1} 点离其他点特别远，很可能抄错了。`]));
   });
   $("checks").innerHTML = checks.map(([c, t]) => `<li class="${c}">${t}</li>`).join("");
@@ -1068,7 +1075,7 @@ async function renderMapImage() {
   g.font = `700 ${12 * S}px sans-serif`; g.textAlign = "center"; g.fillText("N", nx, ny + 28 * S);
   g.textAlign = "left"; g.font = `${10 * S}px ${FONT}`;
   const d = new Date(), stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  g.fillText((baseLabel() ? baseLabel() + " · " : "") + stamp, 10 * S, H - 6 * S);
+  g.fillText((baseLabel() ? baseLabel() + " · " : "") + "截图于 " + stamp, 10 * S, H - 6 * S);   // 写明是截图日期，不是卫星图拍摄日期
   shadow(false);
   return { cv, missing: jobs.length - tiles.length };
 }
