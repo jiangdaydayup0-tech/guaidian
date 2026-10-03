@@ -120,6 +120,16 @@ body.mapfull { overflow: hidden; }
 .ocrbox .msg { font-size: 13px; color: var(--sub); flex: 1; }
 .ocrbox .bar { height: 4px; background: var(--line); border-radius: 2px; margin-top: 6px; overflow: hidden; }
 .ocrbox .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+/* 矿区标签 */
+.areatabs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 12px; }
+.areatabs button { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 6px 11px; border-radius: 999px; background: var(--field); }
+.areatabs button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.areatabs button i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; box-shadow: 0 0 0 1.5px rgba(255,255,255,.85); }
+.areatabs button.add { background: transparent; color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.areatabs button.del { background: transparent; color: var(--faint); font-size: 12px; padding: 6px 4px; }
+.areatabs button em { font-style: normal; font-size: 11px; opacity: .7; }
+#map .mapcard .lg { display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#map .mapcard .lg i { flex: none; width: 10px; height: 10px; border-radius: 2px; }
 .cmbox { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--warn-bg); }
 .cmbox label.f { color: var(--warn); font-weight: 600; font-size: 13px; }
 .cmbox .hint { color: var(--warn); opacity: .85; }
@@ -140,6 +150,7 @@ footer { color: var(--faint); font-size: 12px; line-height: 1.7; margin-top: 18p
 
   <section class="card">
     <h2><span class="step">1</span>粘贴坐标，或者给一张图片</h2>
+    <div class="areatabs" id="areaTabs"></div>
     <div class="imgbar">
       <label class="pick">📷 选图片 / 拍照<input type="file" id="imgFile" accept="image/*"></label>
       <span class="hint" style="margin:0">电脑上可以直接 ⌘V / Ctrl+V 粘贴截图，或把图片拖到下面框里</span>
@@ -194,7 +205,7 @@ footer { color: var(--faint); font-size: 12px; line-height: 1.7; margin-top: 18p
 
   <section class="card">
     <h2><span class="step">4</span>在卫星图上看、截图</h2>
-    <p class="hint" style="margin:-4px 0 10px">很多时候这一步就够了：确认框落在矿区上，截个图发出去。地图上已经标好名称、面积、比例尺和指北针，截下来就能用；也可以点「保存成图片」，存一张更清楚的。</p>
+    <p class="hint" style="margin:-4px 0 10px">好几个矿区会画在同一张图上，看得出相互位置。很多时候这一步就够了：确认框落在矿区上，截个图发出去。地图上已经标好名称、面积、比例尺和指北针，截下来就能用；也可以点「保存成图片」，存一张更清楚的。</p>
     <div id="map"><div class="tiles"></div><svg></svg><div class="empty">有坐标后在这里显示范围</div>
       <div class="mapcard" id="mapCard" hidden></div>
       <div class="scalebar" id="mapScale" hidden><span></span><i></i></div>
@@ -630,7 +641,80 @@ ${marks}
 "use strict";
 // ── 页面 ──
 const $ = id => document.getElementById(id);
-const state = { kind: null, rows: [], computed: null, rings: [] };
+const state = { kind: null, rows: [], computed: null, rings: [] };   // 当前正在编辑的那个矿区
+
+// 矿区清单：可以放好几个矿区，同时画在一张图上。只放在这个网页里，不保存、不上传
+const COLORS = ["#e2453a", "#f2c230", "#2fc4e0", "#e357d0", "#7bd64a", "#ff8a3d", "#ffffff"];
+const areas = [];
+let cur = 0;
+function blankArea() {
+  return { name: "", nameTouched: false, src: "", area: "", areaTouched: false, unit: "km2", datum: "cgcs2000", cm: "",
+           kind: null, rows: [], expected: null, parseNotes: [], rings: [], areaM2: 0 };
+}
+function colorOf(i) { return COLORS[i % COLORS.length]; }
+function displayName(i) {
+  const n = (i === cur ? $("name").value : areas[i].name).trim();
+  return n || (areas.length > 1 ? `矿区 ${i + 1}` : "拐点范围");
+}
+/** 把页面上正在编辑的内容存回清单 */
+function saveCur() {
+  const a = areas[cur];
+  Object.assign(a, { name: $("name").value, nameTouched: !!$("name").dataset.touched, src: $("src").value,
+    area: $("area").value, areaTouched: !!$("area").dataset.touched, unit: $("areaUnit").value, datum: $("datum").value, cm: $("cm").value,
+    kind: state.kind, rows: state.rows, expected: state.expected || null, parseNotes: state.parseNotes || [], rings: state.rings, areaM2: state.areaM2 || 0 });
+}
+/** 切到第 i 个矿区来编辑 */
+function loadArea(i) {
+  cur = i; const a = areas[i];
+  $("name").value = a.name; $("src").value = a.src; $("area").value = a.area; $("areaUnit").value = a.unit; $("datum").value = a.datum; $("cm").value = a.cm;
+  a.nameTouched ? ($("name").dataset.touched = "1") : delete $("name").dataset.touched;
+  a.areaTouched ? ($("area").dataset.touched = "1") : delete $("area").dataset.touched;
+  Object.assign(state, { kind: a.kind, rows: a.rows, expected: a.expected, parseNotes: a.parseNotes, rings: a.rings, areaM2: a.areaM2, computed: null });
+  $("ocrBox").style.display = "none";
+  renderTable(); recompute(true);
+}
+function renderTabs() {
+  const box = $("areaTabs");
+  box.innerHTML = areas.map((a, i) => {
+    const has = (i === cur ? state.rings : a.rings).length > 0;
+    return `<button class="${i === cur ? "on" : ""}" data-area="${i}"><i style="background:${colorOf(i)}"></i>${xmlEsc(displayName(i))}${has ? "" : " <em>（还没坐标）</em>"}</button>`;
+  }).join("") + `<button class="add" id="areaAdd">＋ 再加一个矿区</button>` + (areas.length > 1 ? `<button class="del" id="areaDel">删除当前这个</button>` : "");
+}
+$("areaTabs").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.id === "areaAdd") { saveCur(); areas.push(blankArea()); loadArea(areas.length - 1); $("src").focus(); return; }
+  if (b.id === "areaDel") {
+    if ((state.rows.length || $("src").value.trim()) && !confirm(`删除「${displayName(cur)}」？`)) return;
+    areas.splice(cur, 1); loadArea(Math.min(cur, areas.length - 1)); return;
+  }
+  if (b.dataset.area != null) { const i = +b.dataset.area; if (i === cur) return; saveCur(); loadArea(i); }
+});
+/** 所有已经有范围的矿区（当前这个用页面上最新的） */
+function allAreas() {
+  return areas.map((a, i) => ({ i, name: displayName(i), color: colorOf(i), cur: i === cur,
+    rings: i === cur ? state.rings : a.rings, areaM2: i === cur ? (state.areaM2 || 0) : a.areaM2,
+    datum: i === cur ? $("datum").value : a.datum })).filter(a => a.rings.length);
+}
+function fmtAreaShort(a) { return a >= 1e5 ? (a / 1e6).toFixed(a >= 1e7 ? 2 : 3) + " 平方公里" : a >= 1e3 ? (a / 1e4).toFixed(2) + " 公顷" : a.toFixed(0) + " 平方米"; }
+
+/** 两个矿区的范围有没有重叠：边真正交叉，或者一个的拐点落在另一个里面（贴着边界 1 米以内的不算，免得把「挨着」当成重叠） */
+function ringsOverlap(A, B) {
+  const lat0 = A[0].lat * D2R, P = p => [p.lon * Math.cos(lat0) * 111320, p.lat * 110540];
+  const a = A.map(P), b = B.map(P);
+  for (let i = 0; i < a.length; i++) for (let j = 0; j < b.length; j++)
+    if (segCross(a[i], a[(i + 1) % a.length], b[j], b[(j + 1) % b.length])) return true;
+  const segDist = (p, q, r) => { const dx = r[0] - q[0], dy = r[1] - q[1], L = dx * dx + dy * dy; let t = L ? ((p[0] - q[0]) * dx + (p[1] - q[1]) * dy) / L : 0; t = Math.max(0, Math.min(1, t)); return Math.hypot(p[0] - q[0] - t * dx, p[1] - q[1] - t * dy); };
+  const inside = (p, poly) => {
+    if (poly.some((q, k) => segDist(p, q, poly[(k + 1) % poly.length]) < 1)) return false;
+    let c = false;
+    for (let k = 0, m = poly.length - 1; k < poly.length; m = k++) {
+      const [xi, yi] = poly[k], [xj, yj] = poly[m];
+      if ((yi > p[1]) !== (yj > p[1]) && p[0] < (xj - xi) * (p[1] - yi) / (yj - yi) + xi) c = !c;
+    }
+    return c;
+  };
+  return a.some(p => inside(p, b)) || b.some(p => inside(p, a));
+}
 
 const EXAMPLE = `虚构示例（位置随意，仅演示格式）
 矿山名称：示例金矿
@@ -701,10 +785,12 @@ function recompute(fit) {
   const checks = [];
   const rows = $("tbl").querySelectorAll("tr:not(.outrow)");
   if (!state.kind || !state.rows.length) {
-    state.computed = null; state.rings = [];
+    state.computed = null; state.rings = []; state.areaM2 = 0;
+    if (areas[cur]) { areas[cur].rings = []; areas[cur].areaM2 = 0; }
     $("cmBox").hidden = readCM() == null;
+    renderTabs();
     $("checks").innerHTML = `<li class="warn">${(state.parseNotes || [])[0] || "粘贴坐标后自动检查"}</li>`;
-    drawMap(fit); setExport(false); return;
+    drawMap(fit); setExport(allAreas().length > 0); return;
   }
   const datum = $("datum").value;
   const c = computePoints(state.rows, { kind: state.kind, datum, cm: readCM() });
@@ -767,14 +853,23 @@ function recompute(fit) {
     else if (r.length >= 3) checks.push(["ok", `${blk}拐点按顺序连起来是一个正常的框，没有打结交叉。`]);
     outliers(r).forEach(i => checks.push(["bad", `第 ${r[i].label || i + 1} 点离其他点特别远，很可能抄错了。`]));
   });
+  // 跟其他矿区有没有重叠
+  if (areas[cur]) { areas[cur].rings = state.rings; areas[cur].areaM2 = state.areaM2; }
+  const others = allAreas().filter(a => !a.cur);
+  if (state.rings.length && others.length) {
+    const hit = others.filter(o => state.rings.some(r => o.rings.some(q => ringsOverlap(r, q))));
+    if (hit.length) checks.push(["warn", `跟${hit.map(o => "「" + xmlEsc(o.name) + "」").join("、")}的范围有重叠。如果本来就该重叠（比如查压覆），可以不管；否则请检查坐标。`]);
+    else checks.push(["ok", `跟另外 ${others.length} 个矿区的范围都不重叠。`]);
+  }
   $("checks").innerHTML = checks.map(([c, t]) => `<li class="${c}">${t}</li>`).join("");
+  renderTabs();
   drawMap(fit);
-  setExport(state.rings.length > 0);
+  setExport(allAreas().length > 0);
 }
 
 ["datum", "cm", "areaUnit"].forEach(id => $(id).addEventListener("input", () => recompute(true)));
 $("area").addEventListener("input", () => { $("area").dataset.touched = "1"; recompute(false); });
-$("name").addEventListener("input", () => { $("name").dataset.touched = "1"; if (state.rings.length) drawMap(false); });
+$("name").addEventListener("input", () => { $("name").dataset.touched = "1"; renderTabs(); if (allAreas().length) drawMap(false); });
 let srcTimer;
 $("src").addEventListener("input", () => { clearTimeout(srcTimer); srcTimer = setTimeout(onSourceChange, 250); });
 $("btnExample").onclick = () => { $("src").value = EXAMPLE; delete $("area").dataset.touched; delete $("name").dataset.touched; onSourceChange(); };
@@ -861,17 +956,31 @@ const dropZone = $("src");
 dropZone.addEventListener("drop", e => { const f = [...e.dataTransfer.files].find(f => f.type.startsWith("image/")); if (f) { e.preventDefault(); ocrFile(f); } });
 
 // ── 导出 ──
-function kmlName() { return ($("name").value.trim() || "拐点范围").replace(/[\\/:*?"<>|]/g, "_"); }
+function kmlName() {
+  const list = allAreas(), n = list.length ? list[0].name : displayName(cur);
+  return (list.length > 1 ? `${n}等${list.length}个矿区` : n).replace(/[\\/:*?"<>|]/g, "_");
+}
+function areaMeta(a) {
+  return `${ELLIPSOIDS[a.datum].label}${a.datum !== "cgcs2000" ? "（近似换算）" : ""}；${a.rings.flat().length} 个拐点；面积约 ${fmtArea(a.areaM2, "km2")}`;
+}
+/** 生成 KML。一个矿区时跟以前一样；多个矿区时每个矿区一个文件夹、各用自己的颜色 */
 function currentKml() {
-  const c = state.computed, datum = $("datum").value;
-  const meta = `${ELLIPSOIDS[datum].label}${datum !== "cgcs2000" ? "（近似换算）" : ""}；` +
-    (state.kind === "xy" && c.zoneInfo ? `平面坐标，中央经线 ${c.zoneInfo.cm}°；` : "") +
-    `${state.rings.flat().length} 个拐点；面积约 ${fmtArea(state.rings.reduce((s, r) => s + polygonArea(r, datum), 0), "km2")}`;
-  return buildKml($("name").value.trim() || "拐点范围", state.rings, meta);
+  const list = allAreas();
+  if (list.length <= 1) { const a = list[0]; return buildKml(a.name, a.rings, areaMeta(a)); }
+  const kc = (hex, aa) => aa + hex.slice(5, 7) + hex.slice(3, 5) + hex.slice(1, 3);   // KML 颜色是 aabbggrr
+  const coord = p => p.lon.toFixed(8) + "," + p.lat.toFixed(8) + ",0";
+  const styles = list.map((a, k) => `<Style id="a${k}"><LineStyle><color>${kc(a.color, "ff")}</color><width>3</width></LineStyle><PolyStyle><color>${kc(a.color, "33")}</color></PolyStyle></Style>`).join("\n");
+  const folders = list.map((a, k) => `<Folder><name>${xmlEsc(a.name)}</name>\n` +
+    a.rings.map((ring, j) => `<Placemark><name>${xmlEsc(a.rings.length > 1 ? a.name + "（第" + (j + 1) + "块）" : a.name)}</name><description>${xmlEsc(areaMeta(a))}</description><styleUrl>#a${k}</styleUrl>` +
+      `<Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>${ring.concat([ring[0]]).map(coord).join(" ")}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`).join("\n") + "\n" +
+    a.rings.flat().map(p => `<Placemark><name>${xmlEsc(p.label)}</name><description>${xmlEsc(a.name + "　经度 " + toDMS(p.lon) + "　纬度 " + toDMS(p.lat))}</description><styleUrl>#pt</styleUrl><Point><coordinates>${coord(p)}</coordinates></Point></Placemark>`).join("\n") +
+    `\n</Folder>`).join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n<name>${xmlEsc(kmlName())}</name>\n${styles}\n<Style id="pt"><IconStyle><scale>0.7</scale></IconStyle><LabelStyle><scale>0.9</scale></LabelStyle></Style>\n${folders}\n</Document>\n</kml>\n`;
 }
 function setExport(on) {
   ["btnKml", "btnCopy", "btnShare", "btnPng", "btnPngShare"].forEach(id => $(id).disabled = !on);
-  $("exportNote").textContent = on ? `文件名：${kmlName()}.kml` : "核对完坐标后可以导出";
+  const n = allAreas().length;
+  $("exportNote").textContent = on ? `文件名：${kmlName()}.kml` + (n > 1 ? `（${n} 个矿区都在里面，奥维里每个矿区一个文件夹）` : "") : "核对完坐标后可以导出";
 }
 $("btnKml").onclick = () => {
   const blob = new Blob([currentKml()], { type: "application/vnd.google-earth.kml+xml" });
@@ -902,8 +1011,9 @@ $("btnShare").onclick = async () => {
   } finally { done = true; clearTimeout(timer); }
 };
 $("btnCopy").onclick = async () => {
-  const txt = state.rings.flat().map(p => `${p.label}\t${toDMS(p.lon)}\t${toDMS(p.lat)}\t${p.lon.toFixed(8)}\t${p.lat.toFixed(8)}`).join("\n");
-  const head = "点号\t经度\t纬度\t经度(十进制)\t纬度(十进制)\n";
+  const list = allAreas(), multi = list.length > 1;
+  const txt = list.flatMap(a => a.rings.flat().map(p => (multi ? a.name + "\t" : "") + `${p.label}\t${toDMS(p.lon)}\t${toDMS(p.lat)}\t${p.lon.toFixed(8)}\t${p.lat.toFixed(8)}`)).join("\n");
+  const head = (multi ? "矿区\t" : "") + "点号\t经度\t纬度\t经度(十进制)\t纬度(十进制)\n";
   try { await navigator.clipboard.writeText(head + txt); $("exportNote").textContent = "已复制，可以粘到表格或微信里。"; }
   catch (e) { prompt("复制下面的内容：", head + txt); }
 };
@@ -931,21 +1041,22 @@ function baseLabel() {
   return TIANDITU_KEY ? "© 天地图" : "Esri World Imagery";
 }
 function fitMap() {
-  const all = state.rings.flat(); if (!all.length) return;
+  const all = allAreas().flatMap(a => a.rings.flat()); if (!all.length) return;
   map.w = map.el.clientWidth; map.h = map.el.clientHeight;
   const lats = all.map(p => p.lat), lons = all.map(p => p.lon);
+  const nA = allAreas().length, reserve = nA > 1 ? 40 + 18 * nA : 70;   // 上面给说明牌（图例）留的高度
   let z = 18;
   for (; z > 2; z--) {
     const dx = lon2px(Math.max(...lons), z) - lon2px(Math.min(...lons), z);
     const dy = lat2px(Math.min(...lats), z) - lat2px(Math.max(...lats), z);
-    if (dx < map.w - 80 && dy < map.h - 150) break;   // 上面留出说明牌的位置
+    if (dx < map.w - 80 && dy < map.h - reserve - 80) break;   // 上面留出说明牌的位置
   }
   map.z = z;
   map.cx = (lon2px(Math.max(...lons), z) + lon2px(Math.min(...lons), z)) / 2;
-  map.cy = (lat2px(Math.min(...lats), z) + lat2px(Math.max(...lats), z)) / 2 - 30;   // 框整体往下放一点，不被说明牌挡住
+  map.cy = (lat2px(Math.min(...lats), z) + lat2px(Math.max(...lats), z)) / 2 - reserve / 2 + 5;   // 框整体往下放一点，不被说明牌挡住
 }
 function drawMap(fit) {
-  const has = state.rings.length > 0;
+  const list = allAreas(), has = list.length > 0, multi = list.length > 1;
   map.el.querySelector(".empty").style.display = has ? "none" : "";
   ["mapCard", "mapScale", "mapNorth"].forEach(id => $(id).hidden = !has);
   if (!has) { map.el.querySelector(".tiles").innerHTML = ""; map.imgs.clear(); map.el.querySelector("svg").innerHTML = ""; $("attr").textContent = ""; return; }
@@ -970,20 +1081,27 @@ function drawMap(fit) {
   $("baseNote").textContent = $("basemap").value === "none" ? "" : TIANDITU_KEY ? "" : "（备用卫星图，正式分享前换成天地图）";
   // 范围和拐点
   const sx = p => lon2px(p.lon, map.z) - ox, sy = p => lat2px(p.lat, map.z) - oy;
-  let svg = "";
-  state.rings.forEach(r => {
-    const d = r.map((p, i) => (i ? "L" : "M") + sx(p).toFixed(1) + " " + sy(p).toFixed(1)).join(" ") + " Z";
-    svg += `<path d="${d}" fill="var(--shape)" fill-opacity=".14" stroke="var(--shape)" stroke-width="2.5" stroke-linejoin="round"/>`;
+  // 当前编辑的矿区画在最上面、线粗一点；拐点编号只标当前这个，其他矿区在中间标名字
+  let svg = "", names = "";
+  [...list.filter(a => !a.cur), ...list.filter(a => a.cur)].forEach(a => {
+    const col = list.length === 1 ? "var(--shape)" : a.color;
+    a.rings.forEach(r => {
+      const d = r.map((p, i) => (i ? "L" : "M") + sx(p).toFixed(1) + " " + sy(p).toFixed(1)).join(" ") + " Z";
+      svg += `<path d="${d}" fill="${col}" fill-opacity="${a.cur ? .16 : .1}" stroke="${col}" stroke-width="${a.cur ? 2.8 : 2.2}" stroke-linejoin="round"/>`;
+    });
+    if (a.cur || !multi) a.rings.flat().forEach(p => {
+      const x = sx(p).toFixed(1), y = sy(p).toFixed(1);
+      svg += `<circle cx="${x}" cy="${y}" r="3.5" fill="#fff" stroke="${col}" stroke-width="2"/>`;
+      svg += `<text x="${+x + 6}" y="${+y - 6}" font-size="12" font-weight="600" fill="#fff" stroke="#000" stroke-width="3" paint-order="stroke">${xmlEsc(p.label)}</text>`;
+    });
+    if (multi) { const c = labelPoint(a.rings[0], sx, sy); names += `<text x="${c[0].toFixed(1)}" y="${c[1].toFixed(1)}" text-anchor="middle" font-size="13" font-weight="700" fill="${a.color}" stroke="#000" stroke-width="3.5" paint-order="stroke">${xmlEsc(a.name)}</text>`; }
   });
-  state.rings.flat().forEach(p => {
-    const x = sx(p).toFixed(1), y = sy(p).toFixed(1);
-    svg += `<circle cx="${x}" cy="${y}" r="3.5" fill="#fff" stroke="var(--shape)" stroke-width="2"/>`;
-    svg += `<text x="${+x + 6}" y="${+y - 6}" font-size="12" font-weight="600" fill="#fff" stroke="#000" stroke-width="3" paint-order="stroke">${xmlEsc(p.label)}</text>`;
-  });
-  map.el.querySelector("svg").innerHTML = svg;
-  // 说明牌、比例尺
+  map.el.querySelector("svg").innerHTML = svg + names;
+  // 说明牌（多个矿区时是图例）、比例尺
   const info = mapInfo();
-  $("mapCard").innerHTML = `<b>${xmlEsc(info.title)}</b>${xmlEsc(info.line)}<br><small>${xmlEsc(info.small)}</small>`;
+  $("mapCard").innerHTML = `<b>${xmlEsc(info.title)}</b>` + (info.legend
+    ? info.legend.map(l => `<div class="lg"><i style="background:${l.color}"></i>${xmlEsc(l.text)}</div>`).join("")
+    : xmlEsc(info.line) + "<br>") + `<small>${xmlEsc(info.small)}</small>`;
   const sb = scaleBar(90);
   $("mapScale").querySelector("span").textContent = sb.label;
   $("mapScale").querySelector("i").style.width = sb.px.toFixed(0) + "px";
@@ -991,11 +1109,19 @@ function drawMap(fit) {
 
 /** 地图说明牌的内容：名称、面积、拐点数、坐标系 */
 function mapInfo() {
-  const a = state.areaM2 || 0, n = state.rings.flat().length;
-  const area = a >= 1e5 ? (a / 1e6).toFixed(a >= 1e7 ? 2 : 3) + " 平方公里" : a >= 1e3 ? (a / 1e4).toFixed(2) + " 公顷" : a.toFixed(0) + " 平方米";
-  const datum = $("datum").value;
-  return { title: $("name").value.trim() || "拐点范围", line: `面积约 ${area} · ${n} 个拐点`,
-           small: ELLIPSOIDS[datum].label + (datum !== "cgcs2000" ? "（近似）" : "") };
+  const list = allAreas(), datums = [...new Set(list.map(a => a.datum))];
+  const small = datums.map(d => ELLIPSOIDS[d].label + (d !== "cgcs2000" ? "（近似）" : "")).join("、");
+  if (list.length > 1) return { title: `共 ${list.length} 个矿区`, small,
+    legend: list.map(a => ({ color: a.color, text: `${a.name}　约 ${fmtAreaShort(a.areaM2)}` })) };
+  const a = list[0] || { name: displayName(cur), areaM2: 0, rings: [] };
+  return { title: a.name, line: `面积约 ${fmtAreaShort(a.areaM2)} · ${a.rings.flat().length} 个拐点`, small };
+}
+/** 矿区名字标在哪：多边形的面积重心（凹形时退回到拐点平均位置） */
+function labelPoint(r, sx, sy) {
+  const P = r.map(p => [sx(p), sy(p)]); let A = 0, cx = 0, cy = 0;
+  for (let i = 0; i < P.length; i++) { const [x0, y0] = P[i], [x1, y1] = P[(i + 1) % P.length], k = x0 * y1 - x1 * y0; A += k; cx += (x0 + x1) * k; cy += (y0 + y1) * k; }
+  if (Math.abs(A) < 1e-6) return [P.reduce((s, p) => s + p[0], 0) / P.length, P.reduce((s, p) => s + p[1], 0) / P.length];
+  return [cx / (3 * A), cy / (3 * A) + 4];
 }
 /** 比例尺：大约 target 像素长，取 1、2、5 开头的整数米 */
 function px2lat(y, z) { const n = Math.PI - 2 * Math.PI * y / (TILE * Math.pow(2, z)); return Math.atan(Math.sinh(n)) / D2R; }
@@ -1047,25 +1173,45 @@ async function renderMapImage() {
   const sx = p => (lon2px(p.lon, map.z) - ox0) * S, sy = p => (lat2px(p.lat, map.z) - oy0) * S;
   const RED = "#e2453a", FONT = '"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei",sans-serif';
   g.lineJoin = "round";
-  state.rings.forEach(r => {
-    g.beginPath(); r.forEach((p, i) => i ? g.lineTo(sx(p), sy(p)) : g.moveTo(sx(p), sy(p))); g.closePath();
-    g.fillStyle = "rgba(226,69,58,.14)"; g.fill(); g.strokeStyle = RED; g.lineWidth = 2.5 * S; g.stroke();
+  const list = allAreas(), multi = list.length > 1;
+  const rgba = (hex, a) => `rgba(${parseInt(hex.slice(1, 3), 16)},${parseInt(hex.slice(3, 5), 16)},${parseInt(hex.slice(5, 7), 16)},${a})`;
+  [...list.filter(a => !a.cur), ...list.filter(a => a.cur)].forEach(a => {
+    const col = multi ? a.color : RED;
+    a.rings.forEach(r => {
+      g.beginPath(); r.forEach((p, i) => i ? g.lineTo(sx(p), sy(p)) : g.moveTo(sx(p), sy(p))); g.closePath();
+      g.fillStyle = rgba(col, a.cur ? .16 : .1); g.fill(); g.strokeStyle = col; g.lineWidth = (a.cur ? 2.8 : 2.2) * S; g.stroke();
+    });
+    if (a.cur || !multi) {
+      g.font = `600 ${12 * S}px ${FONT}`;
+      a.rings.flat().forEach(p => {
+        g.beginPath(); g.arc(sx(p), sy(p), 3.5 * S, 0, Math.PI * 2); g.fillStyle = "#fff"; g.fill(); g.strokeStyle = col; g.lineWidth = 2 * S; g.stroke();
+        g.lineWidth = 3 * S; g.strokeStyle = "#000"; g.strokeText(p.label, sx(p) + 6 * S, sy(p) - 6 * S);
+        g.fillStyle = "#fff"; g.fillText(p.label, sx(p) + 6 * S, sy(p) - 6 * S);
+      });
+    }
   });
-  g.font = `600 ${12 * S}px ${FONT}`;
-  state.rings.flat().forEach(p => {
-    g.beginPath(); g.arc(sx(p), sy(p), 3.5 * S, 0, Math.PI * 2); g.fillStyle = "#fff"; g.fill(); g.strokeStyle = RED; g.lineWidth = 2 * S; g.stroke();
-    g.lineWidth = 3 * S; g.strokeStyle = "#000"; g.strokeText(p.label, sx(p) + 6 * S, sy(p) - 6 * S);
-    g.fillStyle = "#fff"; g.fillText(p.label, sx(p) + 6 * S, sy(p) - 6 * S);
-  });
-  // 说明牌
+  if (multi) {   // 矿区名字
+    g.font = `700 ${13 * S}px ${FONT}`; g.textAlign = "center";
+    list.forEach(a => { const c = labelPoint(a.rings[0], sx, sy); g.lineWidth = 3.5 * S; g.strokeStyle = "#000"; g.strokeText(a.name, c[0], c[1]); g.fillStyle = a.color; g.fillText(a.name, c[0], c[1]); });
+    g.textAlign = "left";
+  }
+  // 说明牌（多个矿区时是图例）
   const info = mapInfo(), pad = 9 * S;
   const f1 = `700 ${14 * S}px ${FONT}`, f2 = `${12 * S}px ${FONT}`, f3 = `${11 * S}px ${FONT}`;
-  g.font = f1; let bw = g.measureText(info.title).width; g.font = f2; bw = Math.max(bw, g.measureText(info.line).width); g.font = f3; bw = Math.max(bw, g.measureText(info.small).width);
-  bw = Math.min(bw + pad * 2, W - 16 * S); const bh = 62 * S;
+  const rows = info.legend ? info.legend : [{ text: info.line }];
+  g.font = f1; let bw = g.measureText(info.title).width;
+  g.font = f2; rows.forEach(r => bw = Math.max(bw, g.measureText(r.text).width + (r.color ? 16 * S : 0)));
+  g.font = f3; bw = Math.max(bw, g.measureText(info.small).width);
+  bw = Math.min(bw + pad * 2, W - 16 * S); const bh = (44 + rows.length * 18) * S;
   rrect(g, 8 * S, 8 * S, bw, bh, 8 * S); g.fillStyle = "rgba(255,255,255,.93)"; g.fill();
   g.fillStyle = "#1f2a33"; g.font = f1; g.fillText(info.title, 8 * S + pad, 8 * S + 20 * S, bw - pad * 2);
-  g.font = f2; g.fillText(info.line, 8 * S + pad, 8 * S + 38 * S, bw - pad * 2);
-  g.fillStyle = "#5d6b74"; g.font = f3; g.fillText(info.small, 8 * S + pad, 8 * S + 54 * S, bw - pad * 2);
+  g.font = f2;
+  rows.forEach((r, i) => {
+    const y = 8 * S + (38 + i * 18) * S; let x = 8 * S + pad;
+    if (r.color) { g.fillStyle = r.color; g.fillRect(x, y - 9 * S, 10 * S, 10 * S); x += 16 * S; }
+    g.fillStyle = "#1f2a33"; g.fillText(r.text, x, y, bw - (x - 8 * S) - pad);
+  });
+  g.fillStyle = "#5d6b74"; g.font = f3; g.fillText(info.small, 8 * S + pad, 8 * S + bh - 8 * S, bw - pad * 2);
   // 比例尺、指北针、图源和日期
   const sb = scaleBar(90), shadow = on => { g.shadowColor = on ? "rgba(0,0,0,.85)" : "transparent"; g.shadowBlur = on ? 3 * S : 0; };
   shadow(true); g.fillStyle = "#fff"; g.font = f3; g.fillText(sb.label, 10 * S, H - 30 * S);
@@ -1080,7 +1226,7 @@ async function renderMapImage() {
   return { cv, missing: jobs.length - tiles.length };
 }
 let pngCache = null;   // 分享要在点击后很快发起，所以第一次画好先存着，第二次点直接用
-function pngKey() { return [map.z, map.cx.toFixed(0), map.cy.toFixed(0), map.w, map.h, $("name").value, state.areaM2, $("basemap").value].join("|"); }
+function pngKey() { return [map.z, map.cx.toFixed(0), map.cy.toFixed(0), map.w, map.h, $("basemap").value, cur, ...allAreas().map(a => a.name + a.areaM2)].join("|"); }
 async function getPng() {
   if (pngCache && pngCache.key === pngKey()) return pngCache;
   $("pngNote").textContent = "正在生成图片……";
@@ -1148,6 +1294,8 @@ map.el.addEventListener("wheel", e => {
 }, { passive: false });
 window.addEventListener("resize", () => drawMap(false));
 
+areas.push(blankArea());
+renderTabs();
 setExport(false);
 </script>
 </body>
