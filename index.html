@@ -1030,7 +1030,8 @@ async function renderMapImage() {
     for (let ty = Math.floor(oy / TILE); ty <= Math.floor((oy + H / k) / TILE); ty++) {
       if (ty < 0 || ty >= n) continue;
       const wx = ((tx % n) + n) % n;
-      tileUrls(wx, ty, ze).forEach((u, layer) => jobs.push(loadImg(u).then(img => ({ img, tx, ty, layer }))));
+      // 第一次取不到（比如浏览器缓存里留着一份失败的旧记录），换个网址再取一次
+      tileUrls(wx, ty, ze).forEach((u, layer) => jobs.push(loadImg(u).then(img => img || loadImg(u + "&_r=" + Date.now())).then(img => ({ img, tx, ty, layer }))));
     }
   const tiles = (await Promise.all(jobs)).filter(t => t.img).sort((a, b) => a.layer - b.layer);
   tiles.forEach(t => g.drawImage(t.img, (t.tx * TILE - ox) * k, (t.ty * TILE - oy) * k, TILE * k, TILE * k));
